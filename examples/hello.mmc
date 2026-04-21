@@ -1,0 +1,8 @@
+# Hello World in MMC
+# မင်္ဂလာပါ ကမ္ဘာကြီး
+
+အဓိပ္ပာယ် main() {
+    ပုံနှိပ်("Hello from Myanmar Programming Language!");
+    ပုံနှိပ်("မင်္ဂလာပါ ကမ္ဘာကြီး");
+    ပြန်ပေး 0;
+}

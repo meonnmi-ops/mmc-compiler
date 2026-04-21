@@ -1,0 +1,47 @@
+# Build outputs
+bin/
+build/
+install/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.ll
+*.bc
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+*.out
+test_output/
+
+# Models (large files)
+*.gguf
+*.bin
+models/
+
+# Logs
+*.log
+logs/
+
+# Temporary
+tmp/
+temp/
+*.tmp
