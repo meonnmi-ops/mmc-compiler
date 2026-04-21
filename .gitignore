@@ -1,0 +1,23 @@
+# MMC Transpiler
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.env
+.venv/
+venv/
+env/

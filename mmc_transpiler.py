@@ -103,6 +103,24 @@ def tokenize(line):
             current = ""
             i += 1
             continue
+        # Multi-character operators first (>=, <=, ==, !=, ->, +=, -=, *=, /=, //=, **, **=)
+        if char in ('=', '+', '-', '*', '/', '<', '>', '!', '&', '|') and i + 1 < len(line):
+            two = char + line[i + 1]
+            three = two + line[i + 2] if i + 2 < len(line) else ''
+            if three in ('//=', '**='):
+                if current:
+                    tokens.append(current)
+                tokens.append(three)
+                current = ""
+                i += 3
+                continue
+            if two in ('>=', '<=', '==', '!=', '->', '+=', '-=', '*=', '/=', '//', '**'):
+                if current:
+                    tokens.append(current)
+                tokens.append(two)
+                current = ""
+                i += 2
+                continue
         if char in ('(', ')', '[', ']', '{', '}', ',', ':', '.', '=', '+', '-', '*', '/', '%', '<', '>', '!', '@', '&', '|', '^', '~'):
             if current:
                 tokens.append(current)
@@ -197,8 +215,18 @@ def smart_join(tokens):
             i += 1
             continue
 
-        # Keyword argument equals: no space if previous is identifier
-        if tok == '=' and prev.isidentifier():
+        # Comparison operators: ==, !=, >=, <= (no space around them)
+        if tok in ('==', '!='):
+            parts.append(tok)
+            i += 1
+            continue
+        # Assignment operators: +=, -=, *=, /=, //=, **= (no space)
+        if tok in ('+=', '-=', '*=', '/=', '//=', '**='):
+            parts.append(tok)
+            i += 1
+            continue
+        # Single =: keep space (assignment), no space only inside () or [] (keyword args)
+        if tok == '=' and prev in (')', ']', '"', "'"):
             parts.append(tok)
             i += 1
             continue
