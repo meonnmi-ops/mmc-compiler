@@ -18,7 +18,11 @@ import sys
 import os
 
 # Add parent directory to path so we can import nyanlin package
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# This works whether you run: python main.py  (from inside nyanlin/)
+#                   or:    python nyanlin/main.py  (from parent dir)
+_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _dir)           # for: python nyanlin/main.py
+sys.path.insert(0, os.path.dirname(_dir))  # for: cd nyanlin && python main.py
 
 from nyanlin.inference.generator import Generator
 
