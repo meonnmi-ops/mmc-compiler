@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+nyanlin-env/
+models/
+*.gguf
+.DS_Store
