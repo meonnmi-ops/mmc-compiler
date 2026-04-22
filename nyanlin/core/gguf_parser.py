@@ -178,11 +178,22 @@ class GGUFReader:
         """Skip over array data in file without allocating memory.
 
         Used for large arrays (tokens, merges, etc.) that are loaded lazily.
+        KEY: uses seek() instead of read() to avoid any memory allocation.
         """
         if elem_type == GGUF_TYPE_STRING:
-            for _ in range(count):
-                str_len = struct.unpack("<Q", self.file.read(8))[0]
-                self.file.read(str_len)
+            # Read ALL string length headers in ONE call (8 bytes each)
+            # Then compute total body bytes and skip with ONE seek
+            header_size = count * 8
+            length_data = self.file.read(header_size)
+            if len(length_data) != header_size:
+                raise ValueError(f"Unexpected EOF reading string array headers "
+                               f"(got {len(length_data)}, expected {header_size})")
+            total_body = 0
+            for i in range(count):
+                str_len = struct.unpack_from("<Q", length_data, i * 8)[0]
+                total_body += str_len
+            # ONE seek to skip all string bodies - zero memory allocation
+            self.file.seek(self.file.tell() + total_body)
         else:
             elem_sizes = {
                 GGUF_TYPE_UINT8: 1, GGUF_TYPE_INT8: 1, GGUF_TYPE_BOOL: 1,
@@ -194,7 +205,7 @@ class GGUFReader:
             if size > 0:
                 self.file.seek(self.file.tell() + count * size)
             else:
-                # Unknown type - must read through elements
+                # Unknown type - must read through elements (slow but rare)
                 for _ in range(count):
                     self._read_value(elem_type)
 
