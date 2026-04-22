@@ -9,8 +9,12 @@ Fixed issues:
 """
 
 import struct
+import gc
 import numpy as np
 import os
+
+# Threshold: arrays larger than this are loaded lazily (not stored in metadata dict)
+LAZY_ARRAY_THRESHOLD = 5000
 
 
 # GGUF magic number: "GGUF" in little-endian bytes
@@ -77,9 +81,12 @@ class GGUFReader:
 
     def _open_and_parse(self):
         """Open file and parse header + metadata + tensor infos."""
+        self._lazy_arrays = {}  # key -> (elem_type, count, file_offset) for large arrays
         self.file = open(self.filepath, "rb")
         self._parse_header()
         self._parse_metadata()
+        # Free garbage after metadata parsing (critical for low-RAM systems)
+        gc.collect()
         self._parse_tensor_infos()
         # Keep file open for reading tensor data later
         print(f"[GGUF] Parsed: version={self.version}, tensors={self.n_tensors}, metadata keys={self.n_kv}")
@@ -132,7 +139,12 @@ class GGUFReader:
             raise ValueError(f"Unknown GGUF value type: {dtype}")
 
     def _parse_metadata(self):
-        """Parse all key-value metadata pairs."""
+        """Parse all key-value metadata pairs.
+
+        Large arrays (>5000 elements) are NOT loaded into memory.
+        Instead, only the file offset is recorded. Use read_metadata_array()
+        to read them on demand. This is critical for low-RAM systems.
+        """
         for _ in range(self.n_kv):
             # Read key (string)
             key_len = struct.unpack("<Q", self.file.read(8))[0]
@@ -141,21 +153,77 @@ class GGUFReader:
             # Read value type
             val_type = struct.unpack("<I", self.file.read(4))[0]
 
-            # Read value
-            value = self._read_value(val_type)
+            if val_type == GGUF_TYPE_ARRAY:
+                # Read array header: elem_type + count
+                elem_type = struct.unpack("<I", self.file.read(4))[0]
+                count = struct.unpack("<Q", self.file.read(8))[0]
 
-            self.metadata[key] = value
+                if count > LAZY_ARRAY_THRESHOLD:
+                    # LAZY: record file offset, skip over data (don't allocate!)
+                    offset = self.file.tell()
+                    self._skip_array_data(elem_type, count)
+                    self.metadata[key] = ("__lazy__", count)
+                    self._lazy_arrays[key] = (elem_type, count, offset)
+                else:
+                    value = [self._read_value(elem_type) for _ in range(count)]
+                    self.metadata[key] = value
+            else:
+                value = self._read_value(val_type)
+                self.metadata[key] = value
 
         # Align to 32-byte boundary after metadata
         self._align(32)
 
+    def _skip_array_data(self, elem_type, count):
+        """Skip over array data in file without allocating memory.
+
+        Used for large arrays (tokens, merges, etc.) that are loaded lazily.
+        """
+        if elem_type == GGUF_TYPE_STRING:
+            for _ in range(count):
+                str_len = struct.unpack("<Q", self.file.read(8))[0]
+                self.file.read(str_len)
+        else:
+            elem_sizes = {
+                GGUF_TYPE_UINT8: 1, GGUF_TYPE_INT8: 1, GGUF_TYPE_BOOL: 1,
+                GGUF_TYPE_UINT16: 2, GGUF_TYPE_INT16: 2,
+                GGUF_TYPE_UINT32: 4, GGUF_TYPE_INT32: 4, GGUF_TYPE_FLOAT32: 4,
+                GGUF_TYPE_UINT64: 8, GGUF_TYPE_INT64: 8, GGUF_TYPE_FLOAT64: 8,
+            }
+            size = elem_sizes.get(elem_type, 0)
+            if size > 0:
+                self.file.seek(self.file.tell() + count * size)
+            else:
+                # Unknown type - must read through elements
+                for _ in range(count):
+                    self._read_value(elem_type)
+
+    def read_metadata_array(self, key):
+        """Read a previously-skipped large array from file.
+
+        Used by the tokenizer to load tokens/merges on demand,
+        avoiding double-storage in metadata + tokenizer.
+        """
+        if key not in self._lazy_arrays:
+            val = self.metadata.get(key, [])
+            if isinstance(val, tuple) and len(val) == 2 and val[0] == "__lazy__":
+                return []  # Shouldn't happen
+            return val if isinstance(val, list) else []
+
+        elem_type, count, offset = self._lazy_arrays[key]
+        self.file.seek(offset)
+        return [self._read_value(elem_type) for _ in range(count)]
+
     def _parse_tensor_infos(self):
         """Parse tensor information (name, shape, type, offset)."""
-        data_offset = self.file.tell()
-        # After metadata, tensor data starts (aligned)
-        # Each tensor info: name(string), n_dims(uint32), dims(uint64[]), type(uint32), offset(uint64)
         for _ in range(self.n_tensors):
             name_len = struct.unpack("<Q", self.file.read(8))[0]
+            if name_len > 10000:
+                pos = self.file.tell()
+                raise ValueError(
+                    f"Tensor name too long ({name_len} bytes) at file position {pos}. "
+                    f"File may be corrupted or metadata parsing misaligned."
+                )
             name = self.file.read(name_len).decode("utf-8", errors="replace")
 
             n_dims = struct.unpack("<I", self.file.read(4))[0]

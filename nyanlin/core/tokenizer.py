@@ -6,9 +6,9 @@ Fixed issues:
   - Added vocab_to_id dict for O(1) lookup instead of O(n) linear search
 """
 
-import json
 import struct
-import numpy as np
+
+LAZY_MARKER = "__lazy__"
 
 
 class BPETokenizer:
@@ -27,13 +27,28 @@ class BPETokenizer:
         self._load_from_gguf()
 
     def _load_from_gguf(self):
-        """Load tokenizer data from GGUF metadata."""
+        """Load tokenizer data from GGUF metadata.
+
+        Supports lazy loading: large arrays are read directly from file
+        instead of being copied from metadata dict, saving memory.
+        """
         m = self.reader.metadata
+        reader = self.reader
+
+        # Helper: get value, loading from file if lazy
+        def get_array(key):
+            val = m.get(key, [])
+            if isinstance(val, tuple) and len(val) == 2 and val[0] == LAZY_MARKER:
+                print(f"[Tokenizer] Lazy loading {key} ({val[1]} items from file)...")
+                val = reader.read_metadata_array(key)
+                # Free the lazy placeholder from metadata
+                m.pop(key, None)
+            return val
 
         # Load tokens
-        tokens = m.get("tokenizer.ggml.tokens", [])
-        scores = m.get("tokenizer.ggml.scores", [])
-        token_types = m.get("tokenizer.ggml.token_type", [])
+        tokens = get_array("tokenizer.ggml.tokens")
+        scores = get_array("tokenizer.ggml.scores")
+        token_types = get_array("tokenizer.ggml.token_type")
 
         if not tokens:
             raise ValueError("No tokenizer tokens found in GGUF metadata")
@@ -41,7 +56,7 @@ class BPETokenizer:
         # Pre-allocate lists with correct size (O(n), NOT O(n^2) list concatenation!)
         n = len(tokens)
         self.vocab = tokens
-        self.vocab_scores = list(scores) if scores else [0.0] * n
+        self.vocab_scores = list(scores) if scores and not (isinstance(scores, tuple) and scores[0] == LAZY_MARKER) else [0.0] * n
 
         # Build reverse lookup dict for O(1) token->id mapping
         self._vocab_to_id = {}
@@ -49,7 +64,7 @@ class BPETokenizer:
             self._vocab_to_id[token] = i
 
         # Load BPE merges
-        merge_strs = m.get("tokenizer.ggml.merges", [])
+        merge_strs = get_array("tokenizer.ggml.merges")
         for i, merge_str in enumerate(merge_strs):
             parts = merge_str.split(" ", 1)
             if len(parts) == 2:
