@@ -11,7 +11,9 @@
 #define MAXLAYERS 80
 
 enum{T_U8=0,T_I8,T_U16,T_I16,T_U32,T_I32,T_F32,T_BOOL,T_STR,T_ARR,T_U64,T_I64,T_F64};
-enum{G_F32=0,G_F16,G_Q40,G_Q41,G_Q50,G_Q51,G_Q80};
+enum{G_F32=0,G_F16,G_Q40,G_Q41,G_Q50,G_Q51,G_Q80,G_Q2K=10,G_Q3K=11,G_Q5K=12,G_Q6K=13,G_Q8K=14};
+#define QK_K 256
+#define K_SCALE_SIZE 12
 
 static FILE*GF;
 static int ALGN=32;
@@ -138,6 +140,26 @@ static void dequant(uint8_t*p,float*o,int t,int n){int i=0;
       o[i+j+16]=mm+(((int8_t)(b&0xF0))>>4)*d;}p+=16;}}
   else if(t==G_Q80){for(;i+31<n;i+=32){float d=f16f32(*(uint16_t*)p);p+=2;
     for(int j=0;j<32;j++)o[i+j]=((int8_t)p[j])*d;p+=32;}}
+  else if(t==G_Q5K){
+    for(;i+255<n;i+=256){
+      float d=f16f32(*(uint16_t*)p);p+=2;
+      float dmin=f16f32(*(uint16_t*)p);p+=2;
+      uint8_t sc[12];memcpy(sc,p,12);p+=12;
+      uint32_t qh=*(uint32_t*)p;p+=4;
+      uint8_t ql[128];memcpy(ql,p,128);p+=128;
+      float scales[8];int s=0;
+      for(int j=0;j<4;j++)scales[j]=((sc[j]>>4)&0xF)*d;
+      for(int j=4;j<8;j++)scales[j]=(sc[j]&0xF)*d;
+      for(int j=0;j<4;j++)scales[j]+=scales[j+4]*dmin/d;
+      for(int j=0;j<4;j++)scales[j+4]+=scales[j]*dmin/d;
+      for(int sb=0;sb<8;sb++)for(int j=0;j<32;j++){
+        int idx=i+sb*32+j;
+        int qlv=ql[sb*32+j];
+        int qhv=(qh>>(j/2))&1;
+        int q=(((qlv&0xF)|qhv<<4)-16)*2;
+        if(j%2==0)q=((qlv>>4)|((qh>>(j/2))&1)<<4)-16;
+        o[idx]=dmin+scales[sb]*q;}}
+    if(i<n)memcpy(o+i,p,(n-i)*4);}
   else if(t==G_F16){for(;i<n;i++)o[i]=f16f32(((uint16_t*)p)[i]);}
   else{memcpy(o,p,n*sizeof(float));}
 }
