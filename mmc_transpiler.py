@@ -71,9 +71,27 @@ TYPE_NAMES = {
 # Keywords that should be skipped in output (variable declaration prefixes)
 SKIP_KEYWORDS = {"ကိန်း", "နေရာ", "အတည်"}
 
+# Phase 3: AI Keywords (Myanmar-English hybrid / English / Myanmar / legacy)
+AI_KEYWORDS = {
+    "အေအိုင်AI": "__mmc_ai__",
+    "AI": "__mmc_ai__",
+    "အိုင်အေ": "__mmc_ai__",
+}
+
 # Myanmar digit mapping
 MM_DIGITS = "၀၁၂၃၄၅၆၇၈၉"
 EN_DIGITS = "0123456789"
+
+# Reverse mapping for display
+MM_DIGITS_REVERSE = {v: k for k, v in zip(MM_DIGITS, EN_DIGITS)}
+
+
+def _to_myanmar_digits(text):
+    """Convert English digits in output text to Myanmar digits for display."""
+    result = str(text)
+    for en, mm in MM_DIGITS_REVERSE.items():
+        result = result.replace(en, mm)
+    return result
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -171,6 +189,8 @@ def translate_tokens(tokens):
             result.append(TYPE_NAMES[token])
         elif token in SKIP_KEYWORDS:
             pass
+        elif token in AI_KEYWORDS:
+            result.append(AI_KEYWORDS[token])
         else:
             result.append(token)
         i += 1
@@ -303,6 +323,26 @@ def run_mmc(code):
     import os
 
     py_code = mmc_to_python(code)
+
+    # Phase 3: Auto-inject AI bridge if __mmc_ai__ is used
+    if '__mmc_ai__' in py_code:
+        bridge_preamble = (
+            'try:\n'
+            '    import importlib.util, os\n'
+            '    stdlib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stdlib")\n'
+            '    bridge_file = os.path.join(stdlib_path, "ia_bridge.py")\n'
+            '    if not os.path.isfile(bridge_file):\n'
+            '        bridge_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ia_bridge.py")\n'
+            '    if os.path.isfile(bridge_file):\n'
+            '        spec = importlib.util.spec_from_file_location("mmc_ia_bridge", bridge_file)\n'
+            '        mod = importlib.util.module_from_spec(spec)\n'
+            '        spec.loader.exec_module(mod)\n'
+            '        __mmc_ai__ = mod.__mmc_ai__\n'
+            'except Exception:\n'
+            '    pass\n'
+        )
+        py_code = bridge_preamble + py_code
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(py_code)
         tmp = f.name
