@@ -1,0 +1,198 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Hardware Diagnostic Suite v1.0 - Combined File
+# mmc_diag_combined.mmc
+#
+# Professional mobile motherboard diagnostic and AI-assisted
+# troubleshooting, written entirely in MMC Language.
+#
+# Pipeline: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_codegen.mmc -> Python
+# Usage: python3 compile_mmc.py selfhosted/diag/mmc_diag_combined.mmc --run
+# =================================================================
+
+# --- Severity Constants ---
+SEVERITY_CRITICAL = 4
+SEVERITY_HIGH = 3
+SEVERITY_MEDIUM = 2
+SEVERITY_LOW = 1
+SEVERITY_INFO = 0
+
+# =================================================================
+# Data Tables - Samsung Galaxy S22 Logan REV1.1
+# =================================================================
+
+rail_names = ["VCC_MAIN", "VCC_BATT", "VSYS", "VDD_MAIN", "VDD_CPU", "VDD_MEM", "VDD_IO", "VDD_LCD", "VDD_CAM", "VDD_USB", "VDD_WIFI", "VDD_AUD", "VDD_SIM", "VDD_VIBRA"]
+rail_measured = [3800, 3780, 3700, 0, 0, 15, 1805, 3100, 0, 3280, 1802, 0, 1800, 0]
+rail_nominal = [3800, 3800, 3700, 1100, 950, 1100, 1800, 3100, 1200, 3300, 1800, 1800, 1800, 1300]
+rail_min = [3600, 3500, 3400, 1050, 900, 1050, 1700, 2800, 1100, 3000, 1700, 1700, 1700, 1200]
+rail_max = [4200, 4300, 4200, 1150, 1050, 1200, 1900, 3300, 1300, 3600, 1900, 1900, 1900, 1500]
+
+short_rail = ["VCC_MAIN", "VCC_BATT", "VDD_MAIN", "VDD_CPU", "VDD_MEM", "VDD_IO"]
+short_measured = [850, 920, 3, 85, 8, 1200]
+short_threshold = [50, 50, 80, 80, 100, 120]
+
+cap_names = ["C3101", "C3102", "C3103"]
+cap_ratings = ["100uF 6.3V MLCC", "100uF 6.3V MLCC", "47uF 6.3V MLCC"]
+cap_values = [3, 3, 3]
+
+fault_log = []
+
+အဓိပ္ပာယ် add_fault(severity, component, description):
+    fault_log.append({"severity": severity, "component": component, "description": description})
+
+# =================================================================
+# Print Header
+# =================================================================
+
+ပုံနှိပ်("========================================================")
+ပုံနှိပ်("   MMC Hardware Diagnostic Suite v1.0")
+ပုံနှိပ်("   AI-Assisted Logic Board Troubleshooting")
+ပုံနှိပ်("========================================================")
+ပုံနှိပ်("")
+ပုံနှိပ်("  Device: Samsung Galaxy S22 (SM-S901B)")
+ပုံနှိပ်("  Symptom: No power, no display, no vibration")
+ပုံနှိပ်("  Board:  Logan REV1.1")
+ပုံနှိပ်("")
+
+# =================================================================
+# Phase 1: Voltage Rail Analysis
+# =================================================================
+
+ပုံနှိပ်("  [Phase 1/3] Voltage Rail Analysis")
+ပုံနှိပ်("  -------------------------------")
+
+အတွက် i ထဲတွင် ပတ်လမ်း(len(rail_names)):
+    ကိန်း name = rail_names[i]
+    ကိန်း measured = rail_measured[i]
+    ကိန်း nominal = rail_nominal[i]
+    ကိန်း vmin = rail_min[i]
+    ကိန်း vmax = rail_max[i]
+    ကိန်း status = "[OK]  "
+    အကယ်၍ measured == 0:
+        status = "[FAIL]"
+        add_fault(SEVERITY_CRITICAL, name, "NO POWER (0mV)")
+    အကယ်၍ measured > 0 and measured < vmin * 10 / 100:
+        status = "[FAIL]"
+        add_fault(SEVERITY_CRITICAL, name, "SHORT CIRCUIT")
+    အကယ်၍ measured < vmin:
+        status = "[WARN]"
+        add_fault(SEVERITY_HIGH, name, "Under-voltage")
+    အကယ်၍ measured > vmax:
+        status = "[WARN]"
+        add_fault(SEVERITY_HIGH, name, "Over-voltage")
+    ပုံနှိပ်("  " + status + " " + name + ": " + str(measured) + " mV (nominal " + str(nominal) + ")")
+
+# =================================================================
+# Phase 2: Short-Circuit Detection
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  [Phase 2/3] Short-Circuit Detection")
+ပုံနှိပ်("  -------------------------------")
+
+အတွက် i ထဲတွင် ပတ်လမ်း(len(short_rail)):
+    ကိန်း rail = short_rail[i]
+    ကိန်း res = short_measured[i]
+    ကိန်း threshold = short_threshold[i]
+    အကယ်၍ res < threshold:
+        ပုံနှိပ်("  [FAIL] " + rail + ": " + str(res) + " mohm (threshold " + str(threshold) + ") *** SHORT ***")
+        add_fault(SEVERITY_CRITICAL, rail, "SHORT " + str(res) + " mohm")
+    မဟုတ်ပါက:
+        ပုံနှိပ်("  [OK]   " + rail + ": " + str(res) + " mohm")
+
+# =================================================================
+# Phase 3: Component-Level Analysis
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  [Phase 3/3] Component-Level Analysis")
+ပုံနှိပ်("  ---------------------------------")
+ပုံနှိပ်("  IC Components:")
+ပုံနှိပ်("    U7000 (PMIC):  VCC_MAIN=3800mV OK, VDD_MAIN=0mV NO POWER")
+ပုံနှိပ်("    U3000 (CPU):   VDD_MAIN=0mV NO POWER, VDD_CPU=0mV NO POWER, VDD_MEM=15mV SHORT")
+ပုံနှိပ်("    U5000 (NAND):  VDD_MEM=15mV SHORT")
+add_fault(SEVERITY_CRITICAL, "U7000/PMIC", "Core rails disabled - short protection")
+add_fault(SEVERITY_CRITICAL, "U3000/CPU", "No core voltage - secondary symptom")
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  Decoupling Capacitors (VDD_MAIN rail):")
+အတွက် i ထဲတွင် ပတ်လမ်း(len(cap_names)):
+    ကိန်း val = cap_values[i]
+    ကိန်း result = "SHORTED"
+    အကယ်၍ val >= 1000:
+        result = "LOW"
+    အကယ်၍ val >= 100000:
+        result = "OK"
+    ပုံနှိပ်("    " + cap_names[i] + " (" + cap_ratings[i] + "): " + str(val) + " ohm -> " + result)
+    အကယ်၍ result == "SHORTED":
+        add_fault(SEVERITY_CRITICAL, cap_names[i], "SHORTED " + str(val) + " ohm")
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  Pull-up Resistor:")
+ပုံနှိပ်("    R3201 (CPU enable, 100K 0402): 98000 ohm -> OK")
+
+# =================================================================
+# Fault Summary
+# =================================================================
+
+total_faults = len(fault_log)
+ပုံနှိပ်("")
+ပုံနှိပ်("  Fault Summary")
+ပုံနှိပ်("  -------------")
+ပုံနှိပ်("  Total: " + str(total_faults) + " fault(s)")
+
+critical_count = 0
+high_count = 0
+အတွက် i ထဲတွင် ပတ်လမ်း(len(fault_log)):
+    ကိန်း f = fault_log[i]
+    အကယ်၍ f["severity"] == SEVERITY_CRITICAL:
+        critical_count = critical_count + 1
+    အကယ်၍ f["severity"] == SEVERITY_HIGH:
+        high_count = high_count + 1
+
+ပုံနှိပ်("  CRITICAL: " + str(critical_count))
+ပုံနှိပ်("  HIGH:     " + str(high_count))
+
+အကယ်၍ total_faults > 0:
+    ပုံနှိပ်("")
+    ပုံနှိပ်("  Detailed Findings:")
+    အတွက် i ထဲတွင် ပတ်လမ်း(len(fault_log)):
+        ကိန်း f = fault_log[i]
+        ပုံနှိပ်("  " + str(i + 1) + ". " + f["component"] + ": " + f["description"])
+
+# =================================================================
+# AI Diagnostic Analysis
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  AI Diagnostic Analysis")
+ပုံနှိပ်("  --------------------")
+
+အေအိုင်AI.စဉ်းစားပါ("VDD_MAIN and VDD_CPU = 0mV. VDD_MEM = 15mV only. VDD_MAIN resistance = 3 mohm SHORT. VCC_MAIN and VDD_IO normal. PMIC receives VCC_MAIN but outputs no core voltages - short-circuit protection active. MLCC caps C3101/C3102/C3103 all read 3 ohm DC resistance.")
+
+အေအိုင်AI.ခွဲခြမ်းပါ("Half-split isolation on VDD_MAIN: Remove C3101 first (highest probability - near CPU VDD pin). If short clears, replace and verify. If short persists, remove C3102. C3103 is 47uF so less likely but check last.")
+
+# =================================================================
+# AI Repair Instructions
+# =================================================================
+
+ပုံနှိပ်("")
+အေအိုင်AI.ရှင်းပြပါ("VDD_MAIN Short Repair Procedure: Step 1 - Apply flux to C3101 area. Step 2 - Heat with hot air 240C for 5 seconds. Step 3 - Lift C3101 with tweezers. Step 4 - Measure VDD_MAIN resistance again. Step 5 - If resistance now > 500 mohm: short cleared. Step 6 - Clean pads with IPA. Step 7 - Place new 100uF 6.3V X5R MLCC 0402. Step 8 - Reflow at 240C. Step 9 - Verify solder joints under microscope. Step 10 - Power on and measure VDD_MAIN = 1.1V nominal.")
+
+ပုံနှိပ်("")
+အေအိုင်AI.ဖော်ပြပါ("Root Cause: VDD_MAIN short (3 mohm) from cracked MLCC. Drop impact creates micro-cracks in ceramic dielectric forming conductive path to ground. PMIC detects overcurrent and enters short-circuit protection, disabling all core rails. PMIC is functional - VCC_MAIN and VDD_IO normal.")
+
+# =================================================================
+# Final Report
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("========================================================")
+ပုံနှိပ်("  DIAGNOSIS COMPLETE")
+ပုံနှိပ်("  Primary Fault: VDD_MAIN Short Circuit (3 mohm)")
+ပုံနှိပ်("  Suspect: C3101, C3102, C3103 (MLCC)")
+ပုံနှိပ်("  Action: Remove and retest (half-split method)")
+ပုံနှိပ်("  Repair Time: 30-45 min | Difficulty: Medium")
+ပုံနှိပ်("  Tools: Hot air station, soldering iron, flux, IPA")
+ပုံနှိပ်("  Parts: 100uF 6.3V X5R MLCC 0402")
+ပုံနှိပ်("========================================================")

@@ -1,0 +1,465 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Hardware Diagnostic Suite — Core Repair Logic Module
+# mmc_repair_logic.mmc
+#
+# Professional mobile motherboard repair and AI-assisted
+# troubleshooting module, written entirely in MMC Language.
+#
+# Pipeline: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_c_codegen.mmc -> C99
+# Target: GCC cross-compilation for ARM-v8 (mobile processors)
+#
+# IA Context: AI-Assisted Hardware Diagnostics
+# GitHub: meonnmi-ops/mmc-compiler
+# =================================================================
+
+# =================================================================
+# SECTION 1: Severity Constants
+# =================================================================
+
+SEVERITY_CRITICAL = 4
+SEVERITY_HIGH = 3
+SEVERITY_MEDIUM = 2
+SEVERITY_LOW = 1
+SEVERITY_INFO = 0
+
+# =================================================================
+# SECTION 2: Hardware Component Base Class
+# =================================================================
+
+အတန်း HardwareComponent:
+    """Base class for all hardware components on a logic board.
+
+    Represents a physical component that can be tested, measured,
+    and diagnosed. Each component tracks its reference designator,
+    location, measured values, and fault status.
+    """
+
+    အဓိပ္ပာယ် __init__(ဒီ, ref, component_type, location):
+        ဒီ.ref = ref
+        ဒီ.component_type = component_type
+        ဒီ.location = location
+        ဒီ.measured_value = 0
+        ဒီ.is_faulty = False
+        ဒီ.severity = SEVERITY_INFO
+        ဒီ.notes = ""
+        ဒီ.history = []
+
+    အဓိပ္ပာယ် set_measured(ဒီ, value):
+        """Record a measurement value for this component."""
+        ဒီ.measured_value = value
+        ဒီ.history.append(value)
+
+    အဓိပ္ပာယ် get_history(ဒီ):
+        """Return measurement history for trending analysis."""
+        ပြန်ပေး ဒီ.history
+
+    အဓိပ္ပာယ် flag_fault(ဒီ, severity, notes):
+        """Flag this component as faulty with severity and notes."""
+        ဒီ.is_faulty = True
+        ဒီ.severity = severity
+        ဒီ.notes = notes
+
+    အဓိပ္ပာယ် clear_fault(ဒီ):
+        """Clear the fault flag and notes."""
+        ဒီ.is_faulty = False
+        ဒီ.severity = SEVERITY_INFO
+        ဒီ.notes = ""
+
+    အဓိပ္ပာယ် status_string(ဒီ):
+        """Return a human-readable status string."""
+        အကယ်၍ ဒီ.is_faulty:
+            အကယ်၍ ဒီ.severity == SEVERITY_CRITICAL:
+                ပြန်ပေး "[CRITICAL] " + ဒီ.ref + " - " + ဒီ.notes
+            အကယ်၍ ဒီ.severity == SEVERITY_HIGH:
+                ပြန်ပေး "[HIGH] " + ဒီ.ref + " - " + ဒီ.notes
+            အကယ်၍ ဒီ.severity == SEVERITY_MEDIUM:
+                ပြန်ပေး "[MEDIUM] " + ဒီ.ref + " - " + ဒီ.notes
+            မဟုတ်လျှင်:
+                ပြန်ပေး "[LOW] " + ဒီ.ref + " - " + ဒီ.notes
+        မဟုတ်လျှင်:
+            ပြန်ပေး "[OK] " + ဒီ.ref + " (" + ဒီ.component_type + ")"
+
+
+# =================================================================
+# SECTION 3: IC (Integrated Circuit) Component
+# =================================================================
+
+အတန်း IC(HardwareComponent):
+    """Models an integrated circuit (IC) on the logic board.
+
+    ICs are the primary active components: PMIC, CPU, NAND, etc.
+    Diagnosis involves voltage rail checking, enable signal verification,
+    and thermal analysis.
+    """
+
+    အဓိပ္ပာယ် __init__(ဒီ, ref, location, ic_type, pin_count):
+        HardwareComponent.__init__(ဒီ, ref, "IC", location)
+        ဒီ.ic_type = ic_type
+        ဒီ.pin_count = pin_count
+        ဒီ.vcc_pins = {}
+        ဒီ.enable_pin = 0
+        ဒီ.temp_celsius = 25
+        ဒီ.is_oscillating = False
+
+    အဓိပ္ပာယ် set_vcc(ဒီ, rail_name, voltage_mv):
+        """Record voltage measurement on a specific rail pin."""
+        ဒီ.vcc_pins[rail_name] = voltage_mv
+
+    အဓိပ္ပာယ် set_enable(ဒီ, state):
+        """Record enable pin state (1=enabled, 0=disabled)."""
+        ဒီ.enable_pin = state
+
+    အဓိပ္ပာယ် set_temperature(ဒီ, temp_c):
+        """Record measured temperature in Celsius."""
+        ဒီ.temp_celsius = temp_c
+
+    အဓိပ္ပာယ် check_vcc_rails(ဒီ):
+        """Validate all measured VCC rails against reference values.
+
+        Diagnostic logic:
+            1. Check each measured rail against VOLTAGE_RAILS reference
+            2. If measured == 0: no power (open circuit or dead rail)
+            3. If measured < 10% of min: active short-circuit (CRITICAL)
+            4. If measured < min: undervoltage (possible short to ground)
+            5. If measured > max: overvoltage (regulator failure)
+
+        Returns list of dicts with rail, measured, status.
+        """
+        ကိန်း results = []
+        အတွက် rail_name, measured in ဒီ.vcc_pins.items():
+            ကိန်း status = "OK"
+            အကယ်၍ measured == 0:
+                status = "NO_POWER"
+                ဒီ.flag_fault(SEVERITY_CRITICAL, rail_name + " has NO POWER (0mV)")
+            အကယ်၍ measured > 0 and measured < 50:
+                status = "SHORT_CIRCUIT"
+                ဒီ.flag_fault(SEVERITY_CRITICAL, rail_name + " SHORT (" + str(measured) + "mV)")
+            အကယ်၍ measured < 1000:
+                status = "UNDER_VOLTAGE"
+                ဒီ.flag_fault(SEVERITY_HIGH, rail_name + " under-voltage: " + str(measured) + "mV")
+            အကယ်၍ measured > 5000:
+                status = "OVER_VOLTAGE"
+                ဒီ.flag_fault(SEVERITY_HIGH, rail_name + " over-voltage: " + str(measured) + "mV")
+            results.append({"rail": rail_name, "measured": measured, "status": status})
+        ပြန်ပေး results
+
+    အဓိပ္ပာယ် check_thermal(ဒီ):
+        """Check IC temperature for abnormal thermal conditions.
+
+        Thresholds:
+            < 40C: Normal, 40-60C: Warm, 60-80C: Hot
+            80-100C: Overheating, > 100C: CRITICAL
+        """
+        ကိန်း temp = ဒီ.temp_celsius
+        အကယ်၍ temp > 100:
+            ဒီ.flag_fault(SEVERITY_CRITICAL, "CRITICAL OVERHEAT: " + str(temp) + "C!")
+            ပြန်ပေး SEVERITY_CRITICAL
+        အကယ်၍ temp > 80:
+            ဒီ.flag_fault(SEVERITY_HIGH, "Overheating: " + str(temp) + "C")
+            ပြန်ပေး SEVERITY_HIGH
+        အကယ်၍ temp > 60:
+            ဒီ.flag_fault(SEVERITY_MEDIUM, "Abnormal: " + str(temp) + "C")
+            ပြန်ပေး SEVERITY_MEDIUM
+        အကယ်၍ temp > 40:
+            ဒီ.flag_fault(SEVERITY_LOW, "Warm: " + str(temp) + "C")
+            ပြန်ပေး SEVERITY_LOW
+        မဟုတ်ပါက:
+            ပြန်ပေး SEVERITY_INFO
+
+
+# =================================================================
+# SECTION 4: Resistor Component
+# =================================================================
+
+အတန်း Resistor(HardwareComponent):
+    """Models a surface-mount resistor (SMD) on the logic board.
+
+    Diagnostic approach:
+        1. Measure in-circuit resistance (one direction)
+        2. Reverse probe leads, measure again
+        3. If both readings match schematic: resistor OK
+        4. If one reading low: possible parallel path
+        5. If both readings low: resistor damaged
+    """
+
+    အဓိပ္ပာယ် __init__(ဒီ, ref, location, nominal_ohms, package):
+        HardwareComponent.__init__(ဒီ, ref, "Resistor", location)
+        ဒီ.nominal_ohms = nominal_ohms
+        ဒီ.package = package
+        ဒီ.reverse_reading = 0
+
+    အဓိပ္ပာယ် set_reverse_reading(ဒီ, value):
+        """Record reverse-direction measurement."""
+        ဒီ.reverse_reading = value
+
+    အဓိပ္ပာယ် check_resistance(ဒီ, tolerance_pct):
+        """Validate measured resistance against nominal value.
+
+        Returns: 'OK', 'OPEN', 'SHORTED', 'OUT_OF_SPEC'
+        """
+        ကိန်း measured = ဒီ.measured_value
+        ကိန်း nominal = ဒီ.nominal_ohms
+        ကိန်း lower = nominal * (100 - tolerance_pct) / 100
+        ကိန်း upper = nominal * (100 + tolerance_pct) / 100
+
+        အကယ်၍ measured < 1:
+            ဒီ.flag_fault(SEVERITY_CRITICAL, "OPEN circuit (" + str(measured) + " ohms)")
+            ပြန်ပေး "OPEN"
+        အကယ်၍ measured < nominal * 0.01 and nominal > 100:
+            ဒီ.flag_fault(SEVERITY_CRITICAL, "SHORTED (" + str(measured) + " ohms, expected " + str(nominal) + ")")
+            ပြန်ပေး "SHORTED"
+        အကယ်၍ measured < lower or measured > upper:
+            ဒီ.flag_fault(SEVERITY_MEDIUM, "Out of spec: " + str(measured) + " ohms")
+            ပြန်ပေး "OUT_OF_SPEC"
+        မဟုတ်ပါက:
+            ပြန်ပေး "OK"
+
+
+# =================================================================
+# SECTION 5: Capacitor Component
+# =================================================================
+
+အတန်း Capacitor(HardwareComponent):
+    """Models a surface-mount capacitor (MLCC / Tantalum / Electrolytic).
+
+    Capacitors are critical for power supply filtering and decoupling.
+    Failed MLCCs are the most common cause of mobile phone short circuits.
+
+    Failure modes:
+        1. Short circuit (MLCC cracking under mechanical stress)
+        2. Open circuit (solder joint failure)
+        3. Value degradation (dielectric breakdown)
+    """
+
+    အဓိပ္ပာယ် __init__(ဒီ, ref, location, nominal_uF, voltage_rating, cap_type):
+        HardwareComponent.__init__(ဒီ, ref, "Capacitor", location)
+        ဒီ.nominal_uF = nominal_uF
+        ဒီ.voltage_rating = voltage_rating
+        ဒီ.cap_type = cap_type
+        ဒီ.esr_reading = 0
+
+    အဓိပ္ပာယ် set_esr(ဒီ, esr_mohms):
+        """Record equivalent series resistance measurement."""
+        ဒီ.esr_reading = esr_mohms
+
+    အဓိပ္ပာယ် check_dc_resistance(ဒီ):
+        """Check DC resistance — should be very high for a healthy capacitor.
+
+        A capacitor with low DC resistance is shorted.
+
+        Returns: 'OK', 'SHORTED', 'LEAKY', 'LOW'
+        """
+        ကိန်း measured = ဒီ.measured_value
+        အကယ်၍ measured < 100:
+            ဒီ.flag_fault(SEVERITY_CRITICAL, "SHORTED: " + str(measured) + " ohms - Pull and verify")
+            ပြန်ပေး "SHORTED"
+        အကယ်၍ measured < 1000:
+            ဒီ.flag_fault(SEVERITY_HIGH, "LEAKY: " + str(measured) + " ohms - Retest off-board")
+            ပြန်ပေး "LEAKY"
+        အကယ်၍ measured < 100000:
+            ဒီ.flag_fault(SEVERITY_LOW, "Low resistance: " + str(measured) + " ohms")
+            ပြန်ပေး "LOW"
+        မဟုတ်လျှင်:
+            ပြန်ပေး "OK"
+
+
+# =================================================================
+# SECTION 6: Diagnostic Engine
+# =================================================================
+
+အတန်း DiagnosticEngine:
+    """Main diagnostic engine for mobile logic board troubleshooting.
+
+    Implements a logic tree for short-circuit detection,
+    voltage rail analysis, and AI-assisted repair recommendations.
+
+    Professional phone repair methodology:
+        1. Visual Inspection
+        2. Power Injection Test (DC supply)
+        3. Voltage Rail Measurement
+        4. Short-Circuit Isolation (half-split method)
+        5. Component-Level Diagnosis
+        6. AI Analysis and Repair Recommendation
+    """
+
+    အဓိပ္ပာယ် __init__(ဒီ):
+        ဒီ.components = {}
+        ဒီ.fault_log = []
+        ဒီ.total_current_ma = 0
+
+    အဓိပ္ပာယ် register_component(ဒီ, component):
+        """Register a hardware component for tracking."""
+        ဒီ.components[component.ref] = component
+
+    အဓိပ္ပာယ် add_fault(ဒီ, severity, component_ref, description):
+        """Log a fault entry."""
+        ဒီ.fault_log.append({"severity": severity, "component": component_ref, "description": description})
+
+    အဓိပ္ပာယ် run_voltage_analysis(ဒီ, rail_measurements):
+        """Run complete voltage rail analysis.
+
+        Args: rail_measurements = dict of {rail_name: measured_mV}
+        Returns: dict of {rail_name: analysis_result}
+        """
+        ကိန်း results = {}
+        အတွက် rail, measured in rail_measurements.items():
+            ကိန်း status = "OK"
+            ကိန်း severity = SEVERITY_INFO
+            ကိန်း recommendation = ""
+
+            အကယ်၍ measured == 0:
+                status = "NO_POWER"
+                severity = SEVERITY_CRITICAL
+                recommendation = "Check fuse/diode, PMIC enable, traces"
+                ဒီ.add_fault(SEVERITY_CRITICAL, rail, "No power on " + rail + " (0mV)")
+            အကယ်၍ measured > 0 and measured < 50:
+                status = "SHORT_CIRCUIT"
+                severity = SEVERITY_CRITICAL
+                recommendation = "Active short on " + rail + "! Use thermal camera."
+                ဒီ.add_fault(SEVERITY_CRITICAL, rail, "SHORT " + rail + ": " + str(measured) + "mV")
+            အကယ်၍ measured < 1000:
+                status = "UNDER_VOLTAGE"
+                severity = SEVERITY_HIGH
+                recommendation = "Under-voltage on " + rail + ". Check LDO, caps."
+                ဒီ.add_fault(SEVERITY_HIGH, rail, "Under-voltage " + rail + ": " + str(measured) + "mV")
+            မဟုတ်လျှင်:
+                recommendation = "Rail " + rail + " within specification."
+
+            results[rail] = {"measured": measured, "status": status, "severity": severity, "recommendation": recommendation}
+        ပြန်ပေး results
+
+    အဓိပ္ပာယ် detect_short_circuit(ဒီ, rail_name, resistance_mohms):
+        """Short-circuit detection on a specific voltage rail.
+
+        Professional thresholds based on rail type:
+            - High-power (VCC_MAIN): < 50 mohm = short
+            - Core rails (VDD_MAIN): < 80 mohm = short
+            - Peripheral rails: < 120 mohm = short
+
+        Returns dict with is_shorted, severity, message, action.
+        """
+        ကိန်း threshold = 100
+        အကယ်၍ rail_name == "VCC_MAIN" or rail_name == "VCC_BATT":
+            threshold = 50
+        အကယ်၍ rail_name == "VDD_MAIN" or rail_name == "VDD_CPU":
+            threshold = 80
+
+        ကိန်း is_shorted = False
+        ကိန်း severity = SEVERITY_INFO
+        ကိန်း message = ""
+        ကိန်း action = ""
+
+        အကယ်၍ resistance_mohms < threshold:
+            is_shorted = True
+            severity = SEVERITY_CRITICAL
+            message = "SHORT on " + str(rail_name) + ": " + str(resistance_mohms) + " mohm"
+            action = "Inject voltage, use thermal camera. Check MLCC caps first."
+            ဒီ.add_fault(SEVERITY_CRITICAL, rail_name, message)
+        အကယ်၍ resistance_mohms < threshold * 2:
+            severity = SEVERITY_MEDIUM
+            message = "LOW RESISTANCE on " + str(rail_name) + ": " + str(resistance_mohms) + " mohm"
+            action = "Verify with second meter. Check decoupling caps."
+            ဒီ.add_fault(SEVERITY_MEDIUM, rail_name, message)
+        မဟုတ်လျှင်:
+            message = "Rail " + str(rail_name) + " resistance normal: " + str(resistance_mohms) + " mohm"
+
+        ပြန်ပေး {"is_shorted": is_shorted, "severity": severity, "resistance": resistance_mohms, "threshold": threshold, "message": message, "action": action}
+
+    အဓိပ္ပာယ် get_fault_summary(ဒီ):
+        """Generate a prioritized fault summary sorted by severity."""
+        ကိန်း sorted_faults = sorted(ဒီ.fault_log, key=lambda f: f["severity"], reverse=True)
+        ပြန်ပေး sorted_faults
+
+    အဓိပ္ပာယ် get_severity_count(ဒီ):
+        """Count faults by severity level."""
+        ကိန်း counts = {SEVERITY_CRITICAL: 0, SEVERITY_HIGH: 0, SEVERITY_MEDIUM: 0, SEVERITY_LOW: 0, SEVERITY_INFO: 0}
+        အတွက် fault in ဒီ.fault_log:
+            ကိန်း s = fault["severity"]
+            အကယ်၍ s in counts:
+                counts[s] = counts[s] + 1
+        ပြန်ပေး counts
+
+    အဓိပ္ပာယ် ai_analyze_symptoms(ဒီ, symptom_text):
+        """Send symptoms to AI for analysis via native C bridge."""
+        အေအိုင်AI.စဉ်းစားပါ(symptom_text)
+        အေအိုင်AI.ခွဲခြမ်းပါ(symptom_text)
+
+    အဓိပ္ပာယ် ai_get_repair_instructions(ဒီ, fault_description):
+        """Request step-by-step repair instructions from AI."""
+        အေအိုင်AI.ဖော်ပြပါ(fault_description)
+        အေအိုင်AI.ရှင်းပြပါ(fault_description)
+
+
+# =================================================================
+# SECTION 7: Diagnostic Report Generator
+# =================================================================
+
+အတန်း DiagnosticReport:
+    """Generates professional diagnostic reports in Myanmar CLI format."""
+
+    အဓိပ္ပာယ် __init__(ဒီ, engine):
+        ဒီ.engine = engine
+
+    အဓိပ္ပာယ် print_header(ဒီ):
+        """Print diagnostic report header."""
+        ပုံနှိပ်("========================================================")
+        ပုံနှိပ်("   MMC Hardware Diagnostic Suite v1.0")
+        ပုံနှိပ်("   AI-Assisted Logic Board Troubleshooting")
+        ပုံနှိပ်("========================================================")
+
+    အဓိပ္ပာယ် print_voltage_table(ဒီ, results):
+        """Print voltage analysis results in formatted table."""
+        ပုံနှိပ်("")
+        ပုံနှိပ်("  Voltage Rail Analysis Report")
+        ပုံနှိပ်("  ---------------------------")
+        အတွက် rail, data in results.items():
+            ကိန်း status_mark = "  [OK] "
+            အကယ်၍ data["status"] == "SHORT_CIRCUIT":
+                status_mark = "[FAIL] "
+            အကယ်၍ data["status"] == "NO_POWER":
+                status_mark = "[FAIL] "
+            အကယ်၍ data["status"] == "UNDER_VOLTAGE":
+                status_mark = " [WARN]"
+            အကယ်၍ data["status"] == "OVER_VOLTAGE":
+                status_mark = " [WARN]"
+
+            ပုံနှိပ်("  " + status_mark + " " + str(rail) + ": " + str(data["measured"]) + " mV")
+            ပုံနှိပ်("         " + data["recommendation"])
+
+    အဓိပ္ပာယ် print_fault_summary(ဒီ):
+        """Print prioritized fault summary."""
+        ကိန်း faults = ဒီ.engine.get_fault_summary()
+        ကိန်း counts = ဒီ.engine.get_severity_count()
+
+        ပုံနှိပ်("")
+        ပုံနှိပ်("  Fault Summary")
+        ပုံနှိပ်("  -------------")
+        ပုံနှိပ်("  CRITICAL: " + str(counts[SEVERITY_CRITICAL]))
+        ပုံနှိပ်("  HIGH:     " + str(counts[SEVERITY_HIGH]))
+        ပုံနှိပ်("  MEDIUM:   " + str(counts[SEVERITY_MEDIUM]))
+        ပုံနှိပ်("  LOW:      " + str(counts[SEVERITY_LOW]))
+        ပုံနှိပ်("")
+
+        အကယ်၍ len(faults) > 0:
+            ပုံနှိပ်("  Detailed Findings:")
+            အတွက် i in ပတ်လမ်း(len(faults)):
+                ကိန်း fault = faults[i]
+                ပုံနှိပ်("  " + str(i + 1) + ". [" + str(fault["severity"]) + "] " + str(fault["component"]) + ": " + str(fault["description"]))
+        မဟုတ်လျှင်:
+            ပုံနှိပ်("  No faults detected. Board passes all checks.")
+
+    အဓိပ္ပာယ် print_short_circuit_result(ဒီ, result):
+        """Print short-circuit detection results."""
+        ပုံနှိပ်("")
+        ပုံနှိပ်("  Short-Circuit Detection")
+        ပုံနှိပ်("  ----------------------")
+        ပုံနှိပ်("  Rail:       " + str(result.get("rail", "N/A")))
+        ပုံနှိပ်("  Resistance: " + str(result["resistance"]) + " mohm")
+        ပုံနှိပ်("  Threshold:  " + str(result["threshold"]) + " mohm")
+        အကယ်၍ result["is_shorted"]:
+            ပုံနှိပ်("  Status:     *** SHORT CIRCUIT DETECTED ***")
+            ပုံနှိပ်("  Action:     " + result["action"])
+        မဟုတ်လျှင်:
+            ပုံနှိပ်("  Status:     Normal")
+        ပုံနှိပ်("")

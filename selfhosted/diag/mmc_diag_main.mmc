@@ -1,0 +1,178 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Hardware Diagnostic Suite - Main CLI Entry Point
+# mmc_diag_main.mmc
+#
+# Professional Myanmar-language command-line interface for
+# mobile motherboard diagnostics and AI-assisted troubleshooting.
+#
+# Usage: python3 compile_mmc.py mmc_diag_main.mmc --run
+#
+# IA Context: AI-Assisted Hardware Diagnostics
+# =================================================================
+
+# Simulated voltage measurements (millivolts)
+# Samsung Galaxy S22 - Symptom: No power, no display, no vibration
+rails = {}
+rails["VCC_MAIN"] = 3800
+rails["VCC_BATT"] = 3780
+rails["VSYS"] = 3700
+rails["VDD_MAIN"] = 0
+rails["VDD_CPU"] = 0
+rails["VDD_MEM"] = 15
+rails["VDD_IO"] = 1805
+rails["VDD_LCD"] = 3100
+rails["VDD_CAM"] = 0
+rails["VDD_USB"] = 3280
+rails["VDD_WIFI"] = 1802
+rails["VDD_AUD"] = 0
+rails["VDD_SIM"] = 1800
+rails["VDD_VIBRA"] = 0
+
+# Simulated resistance readings (milliohms) for short detection
+resistance = {}
+resistance["VCC_MAIN"] = 850
+resistance["VCC_BATT"] = 920
+resistance["VDD_MAIN"] = 3
+resistance["VDD_CPU"] = 85
+resistance["VDD_MEM"] = 8
+resistance["VDD_IO"] = 1200
+resistance["VDD_LCD"] = 1500
+resistance["VDD_USB"] = 780
+
+# =================================================================
+# SECTION 1: Initialize Diagnostic Engine
+# =================================================================
+
+engine = DiagnosticEngine()
+report = DiagnosticReport(engine)
+
+# Register Components (from schematic)
+pmic = IC("U7000", "Near battery connector", "PMIC", 128)
+pmic.set_vcc("VCC_MAIN", 3800)
+pmic.set_vcc("VDD_MAIN", 0)
+pmic.set_vcc("VDD_CPU", 0)
+pmic.set_temperature(32)
+engine.register_component(pmic)
+
+cpu = IC("U3000", "Center of board", "CPU/AP", 961)
+cpu.set_vcc("VDD_MAIN", 0)
+cpu.set_vcc("VDD_CPU", 0)
+cpu.set_vcc("VDD_MEM", 15)
+cpu.set_temperature(25)
+engine.register_component(cpu)
+
+nand = IC("U5000", "Below CPU", "NAND/eMMC", 169)
+nand.set_vcc("VDD_MEM", 15)
+nand.set_temperature(25)
+engine.register_component(nand)
+
+# Decoupling capacitors on VDD_MAIN rail
+cap_3101 = Capacitor("C3101", "Near U3000 pin A1", 100, 6.3, "MLCC")
+cap_3101.set_measured(3)
+engine.register_component(cap_3101)
+
+cap_3102 = Capacitor("C3102", "Near U3000 pin B1", 100, 6.3, "MLCC")
+cap_3102.set_measured(3)
+engine.register_component(cap_3102)
+
+cap_3103 = Capacitor("C3103", "Near U3000 pin C1", 47, 6.3, "MLCC")
+cap_3103.set_measured(3)
+engine.register_component(cap_3103)
+
+# Pull-up resistor
+r_3201 = Resistor("R3201", "CPU enable line", 100000, "0402")
+r_3201.set_measured(98000)
+engine.register_component(r_3201)
+
+# =================================================================
+# SECTION 2: Print Header
+# =================================================================
+
+report.print_header()
+ပုံနှိပ်("")
+ပုံနှိပ်("  Device: Samsung Galaxy S22 (SM-S901B)")
+ပုံနှိပ်("  Symptom: No power, no display, no vibration")
+ပုံနှိပ်("  Board: Logan REV1.1")
+ပုံနှိပ်("")
+
+# =================================================================
+# SECTION 3: Phase 1 - Voltage Rail Analysis
+# =================================================================
+
+ပုံနှိပ်("  [Phase 1/3] Voltage Rail Analysis...")
+voltage_results = engine.run_voltage_analysis(rails)
+report.print_voltage_table(voltage_results)
+
+# =================================================================
+# SECTION 4: Phase 2 - Short-Circuit Detection
+# =================================================================
+
+ပုံနှိပ်("  [Phase 2/3] Short-Circuit Detection...")
+အတွက် rail, res in resistance.items():
+    result = engine.detect_short_circuit(rail, res)
+    result["rail"] = rail
+    report.print_short_circuit_result(result)
+
+# =================================================================
+# SECTION 5: Phase 3 - Component-Level Analysis
+# =================================================================
+
+ပုံနှိပ်("  [Phase 3/3] Component-Level Analysis...")
+
+# Check IC voltage rails
+cpu_rail_results = cpu.check_vcc_rails()
+အတွက် r in cpu_rail_results:
+    အကယ်၍ r["status"] != "OK":
+        ပုံနှိပ်("  CPU " + str(r["rail"]) + ": " + r["status"] + " (" + str(r["measured"]) + "mV)")
+
+# Check decoupling capacitors
+ပုံနှိပ်("")
+ပုံနှိပ်("  Decoupling Capacitor Check (VDD_MAIN rail):")
+cap_3101_result = cap_3101.check_dc_resistance()
+cap_3102_result = cap_3102.check_dc_resistance()
+cap_3103_result = cap_3103.check_dc_resistance()
+ပုံနှိပ်("    C3101: " + str(cap_3101.measured_value) + " ohm -> " + cap_3101_result)
+ပုံနှိပ်("    C3102: " + str(cap_3102.measured_value) + " ohm -> " + cap_3102_result)
+ပုံနှိပ်("    C3103: " + str(cap_3103.measured_value) + " ohm -> " + cap_3103_result)
+
+# Check PMIC enable line resistor
+r_3201_result = r_3201.check_resistance(5)
+ပုံနှိပ်("")
+ပုံနှိပ်("  Resistor R3201 (CPU enable pull-up): " + str(r_3201.measured_value) + " ohm -> " + r_3201_result)
+
+# =================================================================
+# SECTION 6: Fault Summary
+# =================================================================
+
+report.print_fault_summary()
+
+# =================================================================
+# SECTION 7: AI Analysis and Repair Instructions
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  AI Diagnostic Analysis")
+ပုံနှိပ်("  --------------------")
+
+engine.ai_analyze_symptoms("VDD_MAIN and VDD_CPU rails show 0mV. VDD_MEM shows only 15mV. VDD_MAIN resistance is 3 mohm (SHORT). VCC_MAIN and VDD_IO are normal. PMIC receives VCC_MAIN but does not output core voltages. Suspect: Decoupling caps C3101/C3102/C3103 on VDD_MAIN are shorted (3 ohm each). PMIC has entered short-circuit protection mode.")
+
+ပုံနှိပ်("")
+အေအိုင်AI.ရှင်းပြပါ("Repair procedure for VDD_MAIN short circuit: Step 1 - Remove C3101 (100uF MLCC near CPU pin A1) and retest resistance. Step 2 - If short persists, remove C3102. Step 3 - If short clears, replace with new 100uF 6.3V X5R MLCC (0402). Step 4 - Apply flux and reball using low-temp solder paste (183C). Step 5 - Verify VDD_MAIN resistance > 500 mohm before power. Step 6 - Power on and verify VDD_MAIN = 1.1V nominal.")
+
+ပုံနှိပ်("")
+အေအိုင်AI.ဖော်ပြပါ("Root Cause: VDD_MAIN short (3 mohm) caused by cracked MLCC decoupling capacitor. Mechanical stress from drop impact creates micro-cracks in ceramic dielectric, creating low-resistance path to ground. PMIC detects overcurrent and shuts down all core rails as protection. PMIC itself is functional since VCC_MAIN and peripheral rails (VDD_IO, VDD_WIFI) are operating normally.")
+
+# =================================================================
+# SECTION 8: Final Report
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("========================================================")
+ပုံနှိပ်("  DIAGNOSIS COMPLETE")
+ပုံနှိပ်("  Primary Fault: VDD_MAIN Short Circuit (3 mohm)")
+ပုံနှိပ်("  Suspect Components: C3101, C3102, C3103 (MLCC)")
+ပုံနှိပ်("  Recommended Action: Remove and retest (half-split)")
+ပုံနှိပ်("  Estimated Repair Time: 30-45 minutes")
+ပုံနှိပ်("  Difficulty: Medium (Micro-soldering required)")
+ပုံနှိပ်("========================================================")

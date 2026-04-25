@@ -1,0 +1,931 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Hardware Diagnostic Suite — Phase 5 Expert Diagnostic Logic
+# mmc_repair_expert.mmc
+#
+# Professional-grade expert diagnostic module targeting
+# Qualcomm Snapdragon 4 Gen 2 (ARM64) for HyperOS/Android phones.
+# Covers Redmi Note 12R, Xiaomi 13, POCO X5 Pro fault patterns.
+#
+# Features:
+#   - Expert voltage rail analysis with adaptive thresholds
+#   - Short-circuit detection with confidence scoring
+#   - Recursive half-split isolation technique
+#   - Comprehensive Xiaomi device fault database
+#   - Snapdragon 4 Gen 2 specific reference data
+#   - Temperature monitoring and thermal protection
+#   - AI-powered repair report generation
+#
+# Pipeline: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_c_codegen.mmc -> C99
+# Target: GCC cross-compilation for ARM-v8 (mobile processors)
+#
+# IA Context: AI-Assisted Hardware Diagnostics
+# GitHub: meonnmi-ops/mmc-compiler
+# =================================================================
+
+# =================================================================
+# SECTION 1: Severity Constants
+# ထိပ်တန်းအဆင့်များ — အရေးကြီးဆုံးအချက်အလက်များနှင့် အဓိရဘူးလို့
+# စစ်ဆေးတဲ့ အဆင့်များဖြစ်ပါတယ်။
+# =================================================================
+
+SEVERITY_CRITICAL = 4
+SEVERITY_HIGH = 3
+SEVERITY_MEDIUM = 2
+SEVERITY_LOW = 1
+SEVERITY_INFO = 0
+
+# =================================================================
+# SECTION 2: Device Database — Redmi/Xiaomi Fault Patterns
+# ခွဲခြမ်းစိတ်ဖြာ ဒေတာဘော compress ပြုလုပ်ထားတဲ့
+# စက်ရုံသုံး ဖုန်းများရဲ့ ပြဿနာအကျုံးဝင်များဖြစ်ပါတယ်။
+# =================================================================
+
+# --- ထုတ်လုပ်ဖုန်းအမည်များကို အမှတ်အသားထားသည့် အိတ်ဝင် ---
+# ဤ ဒေတာတွင် အဓိက စမ်းသပ်မှုလုပ်တဲ့ ဖုန်း ၃ မျိုးပါဝင်ပါတယ်။
+# Redmi Note 12R ၊ Xiaomi 13 ၊ POCO X5 Pro တို့ဖြစ်ပါတယ်။
+
+device_db = [
+    "Redmi Note 12R",
+    "Xiaomi 13",
+    "POCO X5 Pro"
+]
+
+# --- ဖုန်းတို့ရဲ့ ပီပျူးလီးဆီ ရှင်းရှင်းချက်များ ---
+# လုံးဝ ဖုန်းတို့မှာ ဒီ power rail ၁၀ ခု စုစုပေါင်း ပါဝင်ပါတယ်။
+# VCC_MAIN = မူရင်းအားနည်းချိန်, VDD_MEM = မြန်မာဘာသာစကား
+# VDD_CPU = စနစ်ဖြန်းလမ်း, VDD_IO = ချိတ်ဆက်ရေး
+
+device_rails = [
+    ["VCC_MAIN", "VDD_MEM", "VDD_CPU", "VDD_IO", "VDD_LCD",
+     "VDD_USB", "VDD_WIFI", "VDD_AUD", "VDD_SIM", "VDD_VIBRA"],
+    ["VCC_MAIN", "VDD_MEM", "VDD_CPU", "VDD_IO", "VDD_LCD",
+     "VDD_USB", "VDD_WIFI", "VDD_AUD", "VDD_SIM", "VDD_VIBRA"],
+    ["VCC_MAIN", "VDD_MEM", "VDD_CPU", "VDD_IO", "VDD_LCD",
+     "VDD_USB", "VDD_WIFI", "VDD_AUD", "VDD_SIM", "VDD_VIBRA"]
+]
+
+# --- Xiaomi ဖုန်းများရဲ့ သိထားသော ပြဿနာအကျုံးဝင်များ ---
+# ဤ ဒေတာအိတ်ဝင်မှာ မှန်ကန်သော ပြဿနာများနှင့်
+# ပြင်ဆင်နိုင်တဲ့ အတိအကျ လုပ်ငန်းစဉ်များ ရှိပါတယ်။
+# စာရင်းကို လေ့လာသွားပါ။
+
+KNOWN_XIAOMI_FAULTS = [
+    {
+        "device": "Redmi Note 12R",
+        "symptom": "No power",
+        "fault": "PMIC U7400 overcurrent protection",
+        "cause": "VDD_MAIN MLCC short",
+        "fix": "Remove C7410, retest",
+        "difficulty": "Medium",
+        "time_min": 30
+    },
+    {
+        "device": "Redmi Note 12R",
+        "symptom": "Boot loop",
+        "fault": "NAND U7600 bad blocks",
+        "cause": "eMMC wear-level failure",
+        "fix": "Reball NAND or replace",
+        "difficulty": "Hard",
+        "time_min": 60
+    },
+    {
+        "device": "Redmi Note 12R",
+        "symptom": "No display",
+        "fault": "LCD connector corroded",
+        "cause": "Water ingress at J7200",
+        "fix": "Clean connector, replace if damaged",
+        "difficulty": "Easy",
+        "time_min": 15
+    },
+    {
+        "device": "Redmi Note 12R",
+        "symptom": "No backlight",
+        "fault": "Backlight IC U7200 failed",
+        "cause": "Boost converter overload",
+        "fix": "Replace U7200, check D7201",
+        "difficulty": "Medium",
+        "time_min": 25
+    },
+    {
+        "device": "Redmi Note 12R",
+        "symptom": "No charge",
+        "fault": "Charging IC U4000 damaged",
+        "cause": "VBUS overvoltage event",
+        "fix": "Replace charging IC U4000",
+        "difficulty": "Medium",
+        "time_min": 35
+    },
+    {
+        "device": "Xiaomi 13",
+        "symptom": "No charge",
+        "fault": "Tristar U4500 damaged",
+        "cause": "USB overvoltage",
+        "fix": "Replace Tristar IC",
+        "difficulty": "Hard",
+        "time_min": 45
+    },
+    {
+        "device": "Xiaomi 13",
+        "symptom": "No WiFi",
+        "fault": "WiFi/BT module U5300",
+        "cause": "VDD_WIFI LDO failure",
+        "fix": "Check L5301, replace if needed",
+        "difficulty": "Medium",
+        "time_min": 25
+    },
+    {
+        "device": "Xiaomi 13",
+        "symptom": "No signal",
+        "fault": "RF front end module U3100",
+        "cause": "VDD_RF LDO degraded",
+        "fix": "Replace RF front end module",
+        "difficulty": "Hard",
+        "time_min": 55
+    },
+    {
+        "device": "Xiaomi 13",
+        "symptom": "Overheating",
+        "fault": "CPU thermal pad missing",
+        "cause": "Previous repair incomplete",
+        "fix": "Reapply thermal paste and pad",
+        "difficulty": "Easy",
+        "time_min": 20
+    },
+    {
+        "device": "POCO X5 Pro",
+        "symptom": "No IMEI",
+        "fault": "Baseband U2000",
+        "cause": "VDD_BB rail short",
+        "fix": "Check C2010 area",
+        "difficulty": "Hard",
+        "time_min": 50
+    },
+    {
+        "device": "POCO X5 Pro",
+        "symptom": "Random restart",
+        "fault": "PMIC U7400 instability",
+        "cause": "VDD_CPU ripple excessive",
+        "fix": "Replace C7405, C7406 output caps",
+        "difficulty": "Medium",
+        "time_min": 40
+    },
+    {
+        "device": "POCO X5 Pro",
+        "symptom": "Touch not working",
+        "fault": "Touch controller U8000",
+        "cause": "I2C bus pull-up open",
+        "fix": "Replace R8010 pull-up resistor",
+        "difficulty": "Medium",
+        "time_min": 30
+    },
+    {
+        "device": "POCO X5 Pro",
+        "symptom": "Dead after drop",
+        "fault": "PCB crack near CPU BGA",
+        "cause": "Mechanical stress fracture",
+        "fix": "Micro-solder PCB traces under microscope",
+        "difficulty": "Hard",
+        "time_min": 90
+    }
+]
+
+# =================================================================
+# SECTION 3: Expert Diagnostic Functions
+# ခွဲခြမ်းစိတ်ဖြာ အသင်းသင်းမှတ်တမ်းများ
+# ဤ functions များကို ခွဲခြမ်းသူက အသုံးပြုပါတယ်။
+# =================================================================
+
+# -----------------------------------------------------------------
+# 3.1  expert_voltage_check — အားနည်းချိန် စစ်ဆေးခြင်း
+# ပီပျူးလီးဆီတစ်ခုကို တိကျစွာ စစ်ဆေးပြီး
+# အချက်အလက် ပြန်လည်ပေးတဲ့ function ဖြစ်ပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   rail_name    - ပီပျူးလီးဆီ အမည် (အိမ်ခ်: "VDD_CPU")
+#   measured_mv  - တိကျ တိုင်းခြင်းရရှိမှု (mV)
+#   nominal_mv   - သတ်မှတ်ထားသော အားနည်းချိန် (mV)
+#   min_mv       - အနည်းဆုံး သို့မဟုတ် ချိန် (mV)
+#   max_mv       - အများဆုံး ချိန် (mV)
+# Returns:
+#   dict တစ်ခု ပါ: rail, measured, nominal, status, severity, deviation_pct
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် expert_voltage_check(rail_name, measured_mv, nominal_mv, min_mv, max_mv):
+    # ခန့်မှန်းချက် ပြဿနာအကျုံးဝင် စာရင်း
+    ကိန်း status = "OK"
+    ကိန်း severity = SEVERITY_INFO
+
+    # deviation ပြီးပြည့်ဝ တိကျမှု ပြုပြင်ခြင်း
+    ကိန်း deviation_pct = 0
+    အကယ်၍ nominal_mv > 0:
+        deviation_pct = abs(measured_mv - nominal_mv) / nominal_mv * 100
+
+    # ခန့်မှန်းထားသော အားနည်းချိန် တိကျစွာ စစ်ဆေးခြင်း
+    # 0 mV = အားမရှိ (မူရင်းပြဿနာ)
+    အကယ်၍ measured_mv == 0:
+        status = "NO_POWER"
+        severity = SEVERITY_CRITICAL
+
+    # အနည်းဆုံးချိန်ထက် ၁၀% ပိုမို နည်းနေလျှင် = တိမ်ထားခြင်း (SHORT)
+    အကယ်၍ measured_mv > 0 and measured_mv < min_mv * 0.10:
+        status = "SHORT"
+        severity = SEVERITY_CRITICAL
+
+    # အနည်းဆုံးချိန်ထက် နည်းနေလျှင် = UNDER_VOLTAGE
+    အကယ်၍ measured_mv > 0 and measured_mv < min_mv:
+        status = "UNDER_VOLTAGE"
+        severity = SEVERITY_HIGH
+
+    # အများဆုံးချိန်ထက် ပိုလျှင် = OVER_VOLTAGE
+    အကယ်၍ measured_mv > max_mv:
+        status = "OVER_VOLTAGE"
+        severity = SEVERITY_HIGH
+
+    # ပြန်လည်ပေးမည့် အချက်အလက် အိတ်ဝင်
+    ပြန်ပေး {
+        "rail": rail_name,
+        "measured": measured_mv,
+        "nominal": nominal_mv,
+        "status": status,
+        "severity": severity,
+        "deviation_pct": deviation_pct
+    }
+
+
+# -----------------------------------------------------------------
+# 3.2  expert_short_detect — တိမ်ထားခြင်း ခွဲခြမ်းခြင်း
+# ပီပျူးလီးဆီတစ်ခုကို သိထားသော ထိပ်တန်းများနှင့်
+# ဟက်စားပြီး တိမ်ထားခြင်း ရှိမရှိ စစ်ဆေးပါတယ်။
+# ရလဒ်တွင် ယုံကြည်မှု ရာခိုင်နှုန်းကိုလည်း ထည့်သွင်းထားပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   rail_name          - ပီပျူးလီးဆီ အမည်
+#   resistance_mohms   - တိကျ တိကျ တိကျ တိကျချက် (milliohms)
+# Returns:
+#   dict: rail, resistance, threshold, is_shorted, severity, confidence_pct
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် expert_short_detect(rail_name, resistance_mohms):
+    # ပီပျူးလီးဆီ အမျိုးအစား အတိအကျ ထိပ်တန်းများ
+    # အဓိက power rail များတွင် ထိပ်တန်း နည်းပါတယ် (ပိုမို မကြီးမြီး)
+    ကိန်း threshold = 150
+
+    # VCC_MAIN / VCC_BATT = မူရင်း power input လိုက် ထိပ်တန်း သေးငယ်
+    အကယ်၍ rail_name == "VCC_MAIN" or rail_name == "VCC_BATT":
+        threshold = 50
+
+    # VDD_MAIN / VDD_CPU = core rail များ ထိပ်တန်း အသေးစိတ်
+    အကယ်၍ rail_name == "VDD_MAIN" or rail_name == "VDD_CPU":
+        threshold = 80
+
+    # VDD_MEM = မြန်မာ လက်ခံ ထိပ်တန်း အခြေခံ
+    အကယ်၍ rail_name == "VDD_MEM":
+        threshold = 100
+
+    # တိကျတိကျချက် ခွဲခြမ်းခြင်း ရာခိုင်နှုန်း တိကျချက်
+    ကိန်း is_shorted = မှား
+    ကိန်း severity = SEVERITY_INFO
+    ကိန်း confidence_pct = 0
+
+    အကယ်၍ resistance_mohms < threshold:
+        # တိမ်ထားခြင်း ရှိပါတယ် — ရှို့အားထက် အားနည်းချိန် နိုးသွား
+        is_shorted = ပြန်ပြင်
+        severity = SEVERITY_CRITICAL
+        အကယ်၍ threshold > 0:
+            confidence_pct = (threshold - resistance_mohms) / threshold * 100
+        မဟုတ်လျှင်:
+            confidence_pct = 100
+    မဟုတ်လျှင်:
+        # တိမ်ထားခြင်း မရှိ — ဆုံးဖြတ်ခြင်း
+        အကယ်၍ resistance_mohms < threshold * 2:
+            severity = SEVERITY_LOW
+            အကယ်၍ resistance_mohms > 0:
+                confidence_pct = 100 - (threshold / resistance_mohms) * 100
+            မဟုတ်လျှင်:
+                confidence_pct = 100
+        မဟုတ်လျှင်:
+            severity = SEVERITY_INFO
+            confidence_pct = 100
+
+    # ယုံကြည်မှု ရာခိုင်နှုန်းကို အနည်းဆုံး 0 အထိ ကိုင်နက်ထား
+    အကယ်၍ confidence_pct < 0:
+        confidence_pct = 0
+
+    # ပြန်လည်ပေးမည့် အချက်အလက် အိတ်ဝင်
+    ပြန်ပေး {
+        "rail": rail_name,
+        "resistance": resistance_mohms,
+        "threshold": threshold,
+        "is_shorted": is_shorted,
+        "severity": severity,
+        "confidence_pct": confidence_pct
+    }
+
+
+# -----------------------------------------------------------------
+# 3.3  recursive_half_split — ထပ်တိုးကူညီပေးသော အခုံးခံခြင်း
+# ပစ္စည်းစုံ အများစုရဲ့ တိမ်ထားခြင်း ရုံကို သွယ်ဝိုက်
+# ခွဲခြမ်းဖယ်ရှားတဲ့ လုပ်ငန်းစဉ်ဖြစ်ပါတယ်။
+# ဤသည် ကက်သန်းသူများ အသုံးပြုတဲ့ အရည်အသွေးဝင်
+# နည်းလမ်းဖြစ်ပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   component_list    - စစ်ဆေးရန် လိုတဲ့ ပစ္စည်းစုံများ စာရင်း
+#   resistance_base   - အခုံးခံ တိကျချက် (တိကျမှု ပြဿနာ)
+# Returns:
+#   တိမ်ထားခြင်း ရာခိုင်နှုန်း အများဆုံး ပစ္စည်းစုံ အမည်
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် recursive_half_split(component_list, resistance_base):
+    # အခုံးခံ ခန့်မှန်းချက်: စာရင်း တိမ်ပါက ထုတ်ယူမည်
+    အကယ်၍ len(component_list) == 0:
+        ပြန်ပေး ဘာမှမရှိ
+
+    # အခုံးခံ အပိုင်း: ပစ္စည်းစုံ တစ်ခုလုံးသာ ကျန်လျှင်
+    # အဲဒီ ပစ္စည်းစုံကိုပဲ တိမ်ထားခြင်း ရှိတဲ့ အရာဖြစ်ပါတယ်
+    အကယ်၍ len(component_list) == 1:
+        ပြန်ပေး component_list[0]
+
+    # စာရင်းကို တစ်ခုခင်း ကိုင်ခြင်း (half-split technique)
+    # ဤနည်းလမ်းဖြင့် ခွဲခြမ်းချက်ကို ထိုင်းနိုး လောကကုန် တိုးတက်ပေးပါတယ်
+    ကိန်း mid = len(component_list) // 2
+    ကိန်း first_half = component_list[:mid]
+    ကိန်း second_half = component_list[mid:]
+
+    # ပိုမို နိုးသွားတဲ့ အတွက် ခွဲခြမ်းရန် စာရင်း ရွေးချယ်ခြင်း
+    # resistance_base ကို သုံးပြီး မည်သည့် အပိုင်းကို ဆက်လက်ရှာဖယ်မည်
+    ကိန်း first_resistance = resistance_base / (mid + 1)
+    ကိန်း second_resistance = resistance_base / (len(component_list) - mid + 1)
+
+    # အပိုင်းတစ်ခုခုတွင် တိကျချက် ထိပ်တန်းထက် နည်းနေလျှင်
+    # အဲဒီ အပိုင်းကို ဆက်လက် ခွဲခြမ်းပါ
+    အကယ်၍ first_resistance < 50:
+        # ပထမ အခုံးကို ထပ်တိုးကူညီပေးသော ခွဲခြမ်းခြင်း
+        ပြန်ပေး recursive_half_split(first_half, first_resistance)
+    မဟုတ်လျှင်:
+        # ဒုတိယ အခုံးကို ဆက်လက် ခွဲခြမ်းခြင်း
+        ပြန်ပေး recursive_half_split(second_half, second_resistance)
+
+
+# -----------------------------------------------------------------
+# 3.4  search_fault_database — သိထားသော ပြဿနာ ဒေတာ ရှာဖယ်ခြင်း
+# ဖုန်းအမည်နှင့် လက်ရှိ အောက်တွင်း လက်ရှိ ပြဿနာ များကို
+# သိထားသော ဒေတာဘော compress မှာ ရှာပြီး ပြန်လည်ပေးပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   device_name   - ဖုန်းအမည် (အိမ်ခ်: "Redmi Note 12R")
+#   symptom        - ပြဿနာ သတ်မှတ်ချက် (အိမ်ခ်: "No power")
+# Returns:
+#   ကိိတ်ဖော်ကပ် ပြဿနာ အိတ်ဝင်များ စာရင်း
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် search_fault_database(device_name, symptom):
+    # ရွေးချယ်ထားသော ပြဿနာများကို ထုတ်ယူရန် စာရင်း
+    ကိန်း matches = []
+
+    # ဒေတာဘော compress အတွင်း လုံးဝ အိတ်ဝင်များကို ခွဲခြမ်းခြင်း
+    အတွက် i ထဲတွင် ပတ်လမ်း(len(KNOWN_XIAOMI_FAULTS)):
+        ကိန်း entry = KNOWN_XIAOMI_FAULTS[i]
+
+        # ဖုန်းအမည် ကိုင်မှု စစ်ဆေးခြင်း
+        ကိန်း device_match = မှား
+        အကယ်၍ entry.get("device", "") == device_name:
+            device_match = ပြန်ပြင်
+
+        # ပြဿနာ သတ်မှတ်ချက် ကိုင်မှု စစ်ဆေးခြင်း
+        ကိန်း symptom_match = မှား
+        အကယ်၍ entry.get("symptom", "") == symptom:
+            symptom_match = ပြန်ပြင်
+
+        # နှစ်ခုလုံး ကိုင်လျှင် ရွေးချယ်ထားသော စာရင်းသို့ ထည့်သွင်း
+        အကယ်၍ device_match and symptom_match:
+            matches.append(entry)
+
+    # ရွေးချယ်ထားသော ပြဿနာများ ပြန်လည်ပေးခြင်း
+    ပြန်ပေး matches
+
+
+# -----------------------------------------------------------------
+# 3.5  generate_repair_report — ပြင်ဆင်ရေး အစီအစဉ် ထုတ်လုပ်ခြင်း
+# ခွဲခြမ်းရေးရာ ရလဒ်များကို အပြည့်အစုံ စာတွေ့အဖြစ်
+# ထုတ်လုပ်ပေးတဲ့ function ဖြစ်ပါတယ်။ AI ကိုယ်စီားချက်
+# အသုံးပြုပြီး ပြင်ဆင်ရေး အကြံပြုချက်များ ပါဝင်ပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   device            - ဖုန်းအမည်
+#   symptom           - ပြဿနာ သတ်မှတ်ချက်
+#   voltage_results   - အားနည်းချိန် ရလဒ်များ (dict list)
+#   short_results     - တိမ်ထားခြင်း ရလဒ်များ (dict list)
+#   fault_matches     - ဒေတာဘော compress ကိုင်မှုများ (dict list)
+# Returns:
+#   ပြင်ဆင်ရေး အစီအစဉ် စာသား (string)
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် generate_repair_report(device, symptom, voltage_results, short_results, fault_matches):
+    # အစီအစဉ် စာသား စတင်ခြင်း
+    ကိန်း report = ""
+    report = report + "========================================================" + "\n"
+    report = report + "  MMC Expert Diagnostic Report" + "\n"
+    report = report + "  Phase 5 — Advanced Repair Analysis" + "\n"
+    report = report + "========================================================" + "\n"
+    report = report + "\n"
+
+    # --- ဖုန်း အချက်အလက် ---
+    report = report + "[DEVICE INFORMATION]" + "\n"
+    report = report + "  Device:   " + str(device) + "\n"
+    report = report + "  Symptom:  " + str(symptom) + "\n"
+    report = report + "  SoC:      Qualcomm Snapdragon 4 Gen 2 (ARM64)" + "\n"
+    report = report + "  Platform: HyperOS / Android" + "\n"
+    report = report + "\n"
+
+    # --- အားနည်းချိန် ပီပျူးလီးဆီ ရွေးချယ်ချက် အတွက် ---
+    report = report + "[VOLTAGE RAIL ANALYSIS]" + "\n"
+    report = report + "--------------------------------------------------------" + "\n"
+
+    ကိန်း voltage_critical_count = 0
+    ကိန်း voltage_high_count = 0
+    ကိန်း voltage_ok_count = 0
+
+    အတွက် i ထဲတွင် ပတ်လမ်း(len(voltage_results)):
+        ကိန်း vr = voltage_results[i]
+        ကိန်း rail = vr.get("rail", "UNKNOWN")
+        ကိန်း measured = vr.get("measured", 0)
+        ကိန်း status = vr.get("status", "UNKNOWN")
+        ကိန်း sev = vr.get("severity", SEVERITY_INFO)
+        ကိန်း dev_pct = vr.get("deviation_pct", 0)
+
+        # အားနည်းချိန် အခြေခံ မျက်နှာပြုခြင်း
+        အကယ်၍ sev == SEVERITY_CRITICAL:
+            report = report + "  [CRITICAL] " + str(rail) + ": " + str(measured) + " mV (" + str(status) + ")\n"
+            voltage_critical_count = voltage_critical_count + 1
+        အကယ်၍ sev == SEVERITY_HIGH:
+            report = report + "  [HIGH]     " + str(rail) + ": " + str(measured) + " mV (" + str(status) + ")\n"
+            voltage_high_count = voltage_high_count + 1
+        မဟုတ်လျှင်:
+            report = report + "  [OK]       " + str(rail) + ": " + str(measured) + " mV (dev: " + str(dev_pct) + "%)\n"
+            voltage_ok_count = voltage_ok_count + 1
+
+    report = report + "--------------------------------------------------------" + "\n"
+    report = report + "  Summary: " + str(voltage_ok_count) + " OK, " + str(voltage_high_count) + " WARN, " + str(voltage_critical_count) + " CRITICAL" + "\n"
+    report = report + "\n"
+
+    # --- တိမ်ထားခြင်း ခွဲခြမ်းချက် အတွက် ---
+    report = report + "[SHORT-CIRCUIT ANALYSIS]" + "\n"
+    report = report + "--------------------------------------------------------" + "\n"
+
+    ကိန်း short_count = 0
+    ကိန်း short_critical_count = 0
+
+    အတွက် i ထဲတွင် ပတ်လမ်း(len(short_results)):
+        ကိန်း sr = short_results[i]
+        ကိန်း rail = sr.get("rail", "UNKNOWN")
+        ကိန်း resistance = sr.get("resistance", 0)
+        ကိန်း threshold = sr.get("threshold", 100)
+        ကိန်း is_shorted = sr.get("is_shorted", မှား)
+        ကိန်း sev = sr.get("severity", SEVERITY_INFO)
+        ကိန်း conf = sr.get("confidence_pct", 0)
+
+        အကယ်၍ is_shorted:
+            report = report + "  *** SHORT *** " + str(rail) + ": " + str(resistance) + " mohm (threshold: " + str(threshold) + " mohm, confidence: " + str(conf) + "%)" + "\n"
+            short_count = short_count + 1
+            short_critical_count = short_critical_count + 1
+        အကယ်၍ sev == SEVERITY_LOW:
+            report = report + "  [WARN]      " + str(rail) + ": " + str(resistance) + " mohm (threshold: " + str(threshold) + " mohm)" + "\n"
+            short_count = short_count + 1
+        မဟုတ်လျှင်:
+            report = report + "  [OK]        " + str(rail) + ": " + str(resistance) + " mohm" + "\n"
+
+    report = report + "--------------------------------------------------------" + "\n"
+    report = report + "  Shorts detected: " + str(short_count) + " (" + str(short_critical_count) + " critical)" + "\n"
+    report = report + "\n"
+
+    # --- သိထားသော ပြဿနာ ဒေတာ အတွက် ---
+    report = report + "[KNOWN FAULT DATABASE MATCHES]" + "\n"
+    report = report + "--------------------------------------------------------" + "\n"
+
+    အကယ်၍ len(fault_matches) == 0:
+        report = report + "  No known fault patterns matched for this device/symptom." + "\n"
+        report = report + "  Proceed with manual diagnosis using half-split method." + "\n"
+    မဟုတ်လျှင်:
+        အတွက် i ထဲတွင် ပတ်လမ်း(len(fault_matches)):
+            ကိန်း fm = fault_matches[i]
+            report = report + "  Match #" + str(i + 1) + ":" + "\n"
+            report = report + "    Fault:      " + str(fm.get("fault", "Unknown")) + "\n"
+            report = report + "    Cause:      " + str(fm.get("cause", "Unknown")) + "\n"
+            report = report + "    Fix:        " + str(fm.get("fix", "Unknown")) + "\n"
+            report = report + "    Difficulty: " + str(fm.get("difficulty", "Unknown")) + "\n"
+            report = report + "    Est. Time:  " + str(fm.get("time_min", 0)) + " minutes" + "\n"
+            report = report + "\n"
+
+    report = report + "\n"
+
+    # --- AI ပြင်ဆင်ရေး အကြံပြုချက်များ ---
+    report = report + "[AI-POWERED REPAIR RECOMMENDATIONS]" + "\n"
+    report = report + "--------------------------------------------------------" + "\n"
+
+    # AI bridge ကို ခေါ်ပြီး ခွဲခြမ်းရေး မေးခြင်း
+    အကယ်၍ voltage_critical_count > 0:
+        ကိန်း ai_query = "Device: " + str(device) + ", Symptom: " + str(symptom) + ", Critical voltage faults: " + str(voltage_critical_count) + ". Provide expert repair guidance."
+        အေအိုင်AI.စဉ်းစားပါ(ai_query)
+        အေအိုင်AI.ခွဲခြမ်းပါ(ai_query)
+        report = report + "  -> AI analysis requested for " + str(voltage_critical_count) + " critical voltage faults." + "\n"
+
+    အကယ်၍ short_critical_count > 0:
+        ကိန်း ai_short_query = "Short circuit detected on " + str(device) + ". Rail analysis shows " + str(short_critical_count) + " shorted rails. Recommend isolation procedure."
+        အေအိုင်AI.ဖော်ပြပါ(ai_short_query)
+        အေအိုင်AI.ရှင်းပြပါ(ai_short_query)
+        report = report + "  -> AI short-circuit isolation guidance requested." + "\n"
+
+    အကယ်၍ len(fault_matches) > 0:
+        ကိန်း ai_fault_query = "Known fault matched: " + str(fault_matches[0].get("fault", "")) + " on " + str(device) + ". Verify and provide step-by-step repair procedure."
+        အေအိုင်AI.ဖော်ပြပါ(ai_fault_query)
+        report = report + "  -> AI repair procedure requested for matched fault." + "\n"
+
+    report = report + "\n"
+
+    # --- ခန့်မှန်း ပြင်ဆင်ရေး အချိန်နှင့် ခက်ခဲမှု အဆင့် ---
+    report = report + "[ESTIMATED REPAIR PARAMETERS]" + "\n"
+    report = report + "--------------------------------------------------------" + "\n"
+
+    ကိန်း total_time = 0
+    ကိန်း max_difficulty = "Easy"
+
+    အတွက် i ထဲတွင် ပတ်လမ်း(len(fault_matches)):
+        ကိန်း fm = fault_matches[i]
+        ကိန်း t = fm.get("time_min", 0)
+        total_time = total_time + t
+        ကိန်း diff = fm.get("difficulty", "Easy")
+        အကယ်၍ diff == "Hard":
+            max_difficulty = "Hard"
+        အကယ်၍ diff == "Medium" and max_difficulty != "Hard":
+            max_difficulty = "Medium"
+
+    # တိမ်ထားခြင်း ခွဲခြမ်းခြင်း အချိန် ထပ်ထည့်ခြင်း
+    အကယ်၍ short_critical_count > 0:
+        total_time = total_time + short_critical_count * 45
+
+    အကယ်၍ voltage_critical_count > 0:
+        total_time = total_time + voltage_critical_count * 30
+
+    report = report + "  Estimated Total Repair Time: " + str(total_time) + " minutes" + "\n"
+    report = report + "  Difficulty Level:            " + str(max_difficulty) + "\n"
+    report = report + "\n"
+
+    # --- လိုအပ်တဲ့ ကိရိယာများနှင့် အစိတ်အပိုင်းများ ---
+    report = report + "[REQUIRED TOOLS AND PARTS]" + "\n"
+    report = report + "--------------------------------------------------------" + "\n"
+
+    report = report + "  Tools:" + "\n"
+    report = report + "    - Hot air rework station (JBC / Hakko)" + "\n"
+    report = report + "    - Soldering iron (T12 / JBC nano)" + "\n"
+    report = report + "    - Digital multimeter (Keysight / Fluke)" + "\n"
+    report = report + "    - DC power supply (0-5V, 3A adjustable)" + "\n"
+    report = report + "    - Thermal camera (FLIR / Seek)" + "\n"
+    report = report + "    - Microscope (40x-200x zoom)" + "\n"
+    report = report + "    - Tweezers (ESD-safe, sharp tip)" + "\n"
+    report = report + "    - Flux (no-clean, RMA type)" + "\n"
+    report = report + "    - Solder paste (leaded SN63PB37)" + "\n"
+    report = report + "\n"
+
+    report = report + "  Parts (estimate based on findings):" + "\n"
+
+    အကယ်၍ short_critical_count > 0:
+        report = report + "    - MLCC capacitors (0402 / 0201, various values)" + "\n"
+        report = report + "    - PMIC (if rail short is at PMIC output)" + "\n"
+
+    အကယ်၍ voltage_critical_count > 0:
+        report = report + "    - LDO regulators (various SOT-23 / WLCSP)" + "\n"
+        report = report + "    - Power management ICs" + "\n"
+
+    အကယ်၍ len(fault_matches) > 0:
+        report = report + "    - Replacement ICs per fault database recommendations" + "\n"
+        report = report + "    - Connector parts (if water damage detected)" + "\n"
+
+    report = report + "    - Thermal paste / thermal pad" + "\n"
+    report = report + "    - UV adhesive (for display/frame reassembly)" + "\n"
+    report = report + "\n"
+
+    # --- အစီအစဉ် ပိတ်ဆက်ခြင်း ---
+    report = report + "========================================================" + "\n"
+    report = report + "  End of Expert Diagnostic Report" + "\n"
+    report = report + "  Generated by MMC Repair Expert Module v1.0" + "\n"
+    report = report + "  Target: Qualcomm Snapdragon 4 Gen 2 (ARM64)" + "\n"
+    report = report + "========================================================" + "\n"
+
+    # ပြန်လည်ပေး အစီအစဉ် စာသား
+    ပြန်ပေး report
+
+
+# =================================================================
+# SECTION 4: Snapdragon 4 Gen 2 Specific Data
+#  Snapdragon 4 Gen 2 စက်ရုံကို အမှန်တကယ် ရည်ရွယ်ထားသော
+#  ဒေတာများဖြစ်ပါတယ်။ ဤ ဒေတာများကို ခွဲခြမ်းရေး
+#  လုပ်ငန်းစဉ်တွင် သုံးပြီး တိကျတိကျ စစ်ဆေးနိုင်ပါတယ်။
+# =================================================================
+
+# --- Snapdragon 4 Gen 2 နှစ်ပေါင်းချင်း အားနည်းချိန်များ ---
+# ဤ အားနည်းချိန်များကို Qualcomm က သတ်မှတ်ထားပါတယ်။
+# VDD_CPU = စနစ်ဖြန်းလမ်း စီမံချက် (950 mV nominal)
+# VDD_MEM = LPDDR5 မြန်မာ (1100 mV nominal)
+# VDD_GPU = Adreno 603 (800 mV nominal)
+# VDD_MAIN = မူရင်း power rail (1100 mV nominal)
+# VDD_IO = IO ချိတ်ဆက်ရေး (1800 mV nominal)
+
+SD4G2_CORE_VOLTAGES = {
+    "VDD_CPU": 950,
+    "VDD_MEM": 1100,
+    "VDD_GPU": 800,
+    "VDD_MAIN": 1100,
+    "VDD_IO": 1800
+}
+
+# --- Snapdragon 4 Gen 2 power rail အပေါ် အပိုင်း ---
+# ဤ power rail ၁၆ ခုကို စစ်ဆေးရန် လိုပါတယ်။
+# ပိုမို သာမန်ထက် ပို၍ ခွဲခြမ်းစွာ ပြုလုပ်နိုင်ပါတယ်။
+
+SD4G2_POWER_RAILS = [
+    "VCC_MAIN", "VCC_BATT", "VSYS",
+    "VDD_CPU", "VDD_MEM", "VDD_GPU",
+    "VDD_MAIN", "VDD_IO",
+    "VDD_LCD", "VDD_CAM", "VDD_USB",
+    "VDD_WIFI", "VDD_BT", "VDD_AUD",
+    "VDD_SIM", "VDD_VIBRA"
+]
+
+# --- Snapdragon 4 Gen 2 တိမ်ထားခြင်း ထိပ်တန်းများ ---
+# ဤ ထိပ်တန်းများကို milliohms ဖြင့် ဖော်ပြထားပါတယ်။
+# ပိုင်ဆိုင်သော rail များအတွက် ပိုင်ဆိုင်သော ထိပ်တန်းများကို သုံးပါတယ်။
+# VCC_MAIN = 50 mohm (အဓိက power rail — တိမ်ထားခြင်း အားနည်းချိန် ပိုကြီး)
+# VDD_CPU = 80 mohm (core rail — တိမ်ထားခြင်း ကဲ့သို့ သတ်မှတ်ထား)
+# VDD_MEM = 100 mohm (memory rail — တိမ်ထားခြင်း ထိပ်တန်း များပါ)
+# VDD_GPU = 90 mohm (GPU rail — အလွန် တိမ်ထားခြင်း လိုက်)
+# VDD_MAIN = 80 mohm (secondary main rail)
+# VDD_IO = 150 mohm (IO rail — အဓိက power rail မဟုတ်)
+
+SD4G2_SHORT_THRESHOLDS = {
+    "VCC_MAIN": 50,
+    "VDD_CPU": 80,
+    "VDD_MEM": 100,
+    "VDD_GPU": 90,
+    "VDD_MAIN": 80,
+    "VDD_IO": 150
+}
+
+
+# =================================================================
+# SECTION 5: Temperature Monitoring
+#  အပူနည်းချိန် စစ်ဆေးခြင်း လုပ်ငန်းစဉ်
+#  စက်ရုံကိုင် အပူနည်းချိန်ကို အချိန်အခါ စစ်ဆေးပြီး
+#  သတိပေးချက်များ ပေးပါတယ်။
+# =================================================================
+
+# -----------------------------------------------------------------
+# 5.1  create_temp_monitor — အပူနည်းချိန် စစ်ဆေးရေး ဖန်တီးခြင်း
+# ပစ္စည်းစုံတစ်ခုရဲ့ လက်ရှိ အပူနည်းချိန်ကို
+# သတ်မှတ်ထားသော အများဆုံး သို့မဟုတ် အပြည့်အစုံ
+#  ခန့်မှန်းချက်နှင့် ကိုင်ပြီး ခွဲခြမ်းပေးပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   component_name   - ပစ္စည်းစုံ အမည်
+#   current_temp     - လက်ရှိ အပူနည်းချိန် (Celsius)
+#   max_safe_temp    - အသက်ရှူ အပူနည်းချိန် (Celsius)
+# Returns:
+#   dict: component, temperature, severity, message, action_required
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် create_temp_monitor(component_name, current_temp, max_safe_temp):
+    # အပူနည်းချိန် ခန့်မှန်းချက် မျက်နှာပြုခြင်း
+    ကိန်း severity = SEVERITY_INFO
+    ကိန်း message = ""
+    ကိန်း action_required = မှား
+
+    # 40°C ထက် နည်းလျှင် = ပျော်ရွှင်သော အပူနည်းချိန်
+    အကယ်၍ current_temp < 40:
+        severity = SEVERITY_INFO
+        message = str(component_name) + " temperature normal: " + str(current_temp) + "C (safe limit: " + str(max_safe_temp) + "C)"
+
+    # 40-60°C = အပူနည်းချိန် နည်းနေသော (LOW)
+    အကယ်၍ current_temp >= 40 and current_temp < 60:
+        severity = SEVERITY_LOW
+        message = str(component_name) + " warm: " + str(current_temp) + "C — monitor during extended use"
+        action_required = ပြန်ပြင်
+
+    # 60-80°C = အပူနည်းချိန် မြင့်မားနေသော (MEDIUM)
+    အကယ်၍ current_temp >= 60 and current_temp < 80:
+        severity = SEVERITY_MEDIUM
+        message = str(component_name) + " hot: " + str(current_temp) + "C — reduce load, check thermal paste"
+        action_required = ပြန်ပြင်
+
+    # 80-100°C = အပူနည်းချိန် လွန်ခဲ့သော (HIGH)
+    အကယ်၍ current_temp >= 80 and current_temp < 100:
+        severity = SEVERITY_HIGH
+        message = str(component_name) + " OVERHEATING: " + str(current_temp) + "C — immediate action required!"
+        action_required = ပြန်ပြင်
+
+    # 100°C အထိ = အရေးကြီးဆုံး အပူနည်းချိန် လွန်ခဲ့သော (CRITICAL)
+    အကယ်၍ current_temp >= 100:
+        severity = SEVERITY_CRITICAL
+        message = str(component_name) + " CRITICAL OVERHEAT: " + str(current_temp) + "C! Power down immediately! Risk of permanent damage!"
+        action_required = ပြန်ပြင်
+
+    # ပြန်လည်ပေး အချက်အလက်
+    ပြန်ပေး {
+        "component": component_name,
+        "temperature": current_temp,
+        "max_safe": max_safe_temp,
+        "severity": severity,
+        "message": message,
+        "action_required": action_required
+    }
+
+
+# -----------------------------------------------------------------
+# 5.2  batch_temp_check — အပူနည်းချိန် အုပ်စု ခွဲခြမ်းခြင်း
+# ပစ္စည်းစုံ အများစုရဲ့ အပူနည်းချိန်ကို တစ်ခါတည်းတည်း
+# စစ်ဆေးပြီး အရေးကြီးဆုံး ပြဿနာ ရှိမရှိ စစ်ဆေးပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   temp_readings    - dict of {component_name: current_temp_C}
+#   safe_limits      - dict of {component_name: max_safe_temp_C}
+# Returns:
+#   dict: total_checked, critical_count, high_count, medium_count, low_count, results
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် batch_temp_check(temp_readings, safe_limits):
+    ကိန်း results = []
+    ကိန်း critical_count = 0
+    ကိန်း high_count = 0
+    ကိန်း medium_count = 0
+    ကိန်း low_count = 0
+
+    # လုံးဝ ပစ္စည်းစုံများကို စစ်ဆေးခြင်း
+    အတွက် component_name ထဲတွင် temp_readings:
+        ကိန်း current_temp = temp_readings[component_name]
+        ကိန်း max_safe = safe_limits.get(component_name, 85)
+        ကိန်း monitor_result = create_temp_monitor(component_name, current_temp, max_safe)
+        results.append(monitor_result)
+
+        # အရေးကြီးဆုံး အဆင့် ရောင်းချခြင်း
+        ကိန်း sev = monitor_result.get("severity", SEVERITY_INFO)
+        အကယ်၍ sev == SEVERITY_CRITICAL:
+            critical_count = critical_count + 1
+        အကယ်၍ sev == SEVERITY_HIGH:
+            high_count = high_count + 1
+        အကယ်၍ sev == SEVERITY_MEDIUM:
+            medium_count = medium_count + 1
+        အကယ်၍ sev == SEVERITY_LOW:
+            low_count = low_count + 1
+
+    ပြန်ပေး {
+        "total_checked": len(temp_readings),
+        "critical_count": critical_count,
+        "high_count": high_count,
+        "medium_count": medium_count,
+        "low_count": low_count,
+        "results": results
+    }
+
+
+# -----------------------------------------------------------------
+# 5.3  get_rail_voltage_status — ပီပျူးလီးဆီ အားနည်းချိန် အခြေခံ
+#  Snapdragon 4 Gen 2 ပီပျူးလီးဆီတစ်ခုကို တိကျ တိကျ
+#  တိကျ တိကျချက်ကို ခန့်မှန်းထားသော အားနည်းချိန်နှင့်
+#  ကိုင်ပြီး ခွဲခြမ်းခြင်း ပြုလုပ်ပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   rail_name        - ပီပျူးလီးဆီ အမည်
+#   measured_mv      - တိကျ တိကျ တိကျချက် (mV)
+# Returns:
+#   dict သို့မဟုတ် ဘာမှမရှိ (rail မရှိလျှင်)
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် get_rail_voltage_status(rail_name, measured_mv):
+    # ဤ rail အတွက် သတ်မှတ်ထားသော အားနည်းချိန်ကို ရှာမယ်
+    ကိန်း nominal = SD4G2_CORE_VOLTAGES.get(rail_name, 0)
+
+    # ပီပျူးလီးဆီ တွေ့မရှိလျှင် ဘာမှမရှိ ပြန်လည်ပေး
+    အကယ်၍ nominal == 0:
+        ပြန်ပေး ဘာမှမရှိ
+
+    # ခန့်မှန်းထားသော အားနည်းချိန် အပိုင်း တိကျချက်
+    # အရေးကြီးဆုံး အားနည်းချိန် သတ်မှတ်ချက် (±10%)
+    ကိန်း tolerance_pct = 10
+    ကိန်း min_mv = nominal * (100 - tolerance_pct) / 100
+    ကိန်း max_mv = nominal * (100 + tolerance_pct) / 100
+
+    # expert_voltage_check function ကို ခေါ်ပြီး ခွဲခြမ်းခြင်း
+    ပြန်ပေး expert_voltage_check(rail_name, measured_mv, nominal, min_mv, max_mv)
+
+
+# -----------------------------------------------------------------
+# 5.4  diagnose_all_power_rails — အားနည်းချိန် ပီပျူးလီးဆီ အပေါ်
+#  Snapdragon 4 Gen 2 ရဲ့ ပီပျူးလီးဆီ အားနည်းချိန်များကို
+#  အပြည့်အစုံ စစ်ဆေးခြင်း ပြုလုပ်ပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   measurements     - dict of {rail_name: measured_mV}
+# Returns:
+#   list of voltage check result dicts
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် diagnose_all_power_rails(measurements):
+    ကိန်း all_results = []
+
+    # ပီပျူးလီးဆီ အုပ်စု ခွဲခြမ်းခြင်း
+    အတွက် rail_name ထဲတွင် SD4G2_POWER_RAILS:
+        ကိန်း measured = measurements.get(rail_name, 0)
+        ကိန်း result = get_rail_voltage_status(rail_name, measured)
+
+        အကယ်၍ result != ဘာမှမရှိ:
+            all_results.append(result)
+        မဟုတ်လျှင်:
+            # ဤ rail ကို အခြေခံ ခန့်မှန်းချက် မရနိုင်ပါ
+            all_results.append({
+                "rail": rail_name,
+                "measured": measured,
+                "nominal": 0,
+                "status": "UNKNOWN_RAIL",
+                "severity": SEVERITY_INFO,
+                "deviation_pct": 0
+            })
+
+    ပြန်ပေး all_results
+
+
+# -----------------------------------------------------------------
+# 5.5  full_board_diagnosis — အပြည့်အစုံ စက်ကိုယ် ခွဲခြမ်းခြင်း
+#  ဤ function ကို ခွဲခြမ်းရေး အဓိက ဝင်ပိုင်းဖြစ်ပါတယ်။
+#  အားနည်းချိန် ပီပျူးလီးဆီ ခွဲခြမ်းခြင်း, တိမ်ထားခြင်း
+#  ခွဲခြမ်းခြင်း, အပူနည်းချိန် စစ်ဆေးခြင်း, ပြဿနာ
+#  ဒေတာ ရှာဖယ်ခြင်း နှင့် ပြင်ဆင်ရေး အစီအစဉ်
+#  ထုတ်လုပ်ခြင်း တိုးကူညီပေးပါတယ်။
+# -----------------------------------------------------------------
+# Parameters:
+#   device_name      - ဖုန်းအမည်
+#   symptom           - ပြဿနာ သတ်မှတ်ချက်
+#   voltage_measurements  - dict of {rail_name: measured_mV}
+#   resistance_readings   - dict of {rail_name: resistance_mohms}
+#   temp_readings         - dict of {component_name: temp_C}
+#   temp_limits           - dict of {component_name: max_safe_temp_C}
+# Returns:
+#   dict: voltage_results, short_results, temp_results, fault_matches, report
+# -----------------------------------------------------------------
+
+အဓိပ္ပာယ် full_board_diagnosis(device_name, symptom, voltage_measurements, resistance_readings, temp_readings, temp_limits):
+    # --- ပမာဏ ၁: အားနည်းချိန် ပီပျူးလီးဆီ ခွဲခြမ်းခြင်း ---
+    ကိန်း voltage_results = diagnose_all_power_rails(voltage_measurements)
+
+    # --- ပမာဏ ၂: တိမ်ထားခြင်း ခွဲခြမ်းခြင်း ---
+    ကိန်း short_results = []
+    အတွက် rail_name ထဲတွင် resistance_readings:
+        ကိန်း resistance = resistance_readings[rail_name]
+        ကိန်း short_result = expert_short_detect(rail_name, resistance)
+        short_results.append(short_result)
+
+    # --- ပမာဏ ၃: အပူနည်းချိန် စစ်ဆေးခြင်း ---
+    ကိန်း temp_results = batch_temp_check(temp_readings, temp_limits)
+
+    # --- ပမာဏ ၄: သိထားသော ပြဿနာ ဒေတာ ရှာဖယ်ခြင်း ---
+    ကိန်း fault_matches = search_fault_database(device_name, symptom)
+
+    # --- ပမာဏ ၅: ပြင်ဆင်ရေး အစီအစဉ် ထုတ်လုပ်ခြင်း ---
+    ကိန်း report = generate_repair_report(
+        device_name, symptom,
+        voltage_results, short_results, fault_matches
+    )
+
+    # ပုံနှိပ် ဖိုင် ထုတ်လုပ်ခြင်း
+    ပုံနှိပ်("========================================================")
+    ပုံနှိပ်("  Full Board Diagnosis Complete")
+    ပုံနှိပ်("  Device: " + str(device_name))
+    ပုံနှိပ်("========================================================")
+    ပုံနှိပ်("")
+
+    # အားနည်းချိန် ခန့်မှန်းထားသော ရလဒ်များ ပြသခြင်း
+    ပုံနှိပ်("  Voltage Rails Checked: " + str(len(voltage_results)))
+    ကိန်း v_crit = 0
+    အတွက် vr ထဲတွင် voltage_results:
+        အကယ်၍ vr.get("severity", 0) == SEVERITY_CRITICAL:
+            v_crit = v_crit + 1
+    ပုံနှိပ်("  Critical Voltage Faults: " + str(v_crit))
+
+    # တိမ်ထားခြင်း ရလဒ်များ ပြသခြင်း
+    ပုံနှိပ်("  Rails Shorted: " + str(temp_results.get("critical_count", 0)))
+
+    # အပူနည်းချိန် ရလဒ်များ ပြသခြင်း
+    ပုံနှိပ်("  Temperature Alerts: " + str(temp_results.get("critical_count", 0) + temp_results.get("high_count", 0)))
+
+    # ပြဿနာ ဒေတာ ကိုင်မှုများ ပြသခြင်း
+    ပုံနှိပ်("  Known Fault Matches: " + str(len(fault_matches)))
+
+    ပုံနှိပ်("")
+
+    # ရလဒ် ပြန်လည်ပေးခြင်း
+    ပြန်ပေး {
+        "voltage_results": voltage_results,
+        "short_results": short_results,
+        "temp_results": temp_results,
+        "fault_matches": fault_matches,
+        "report": report
+    }

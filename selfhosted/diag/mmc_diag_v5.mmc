@@ -1,0 +1,322 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Hardware Intelligence Diagnostic Suite v5.0
+# mmc_diag_v5.mmc — Phase 5 Main Diagnostic Entry Point
+# with Audio UI Integration (Saing Waing Instrument Set)
+#
+# Target: Redmi Note 12R (23026RN0DA)
+# SoC:    Qualcomm Snapdragon 4 Gen 2 (SM4450, ARM64)
+# OS:     HyperOS / Android (Termux Compatible)
+# Audio:  Traditional Saing Waing 5-instrument set via ia_audio.c
+#
+# Pipeline: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_codegen.mmc -> C
+# Binary:   nyanlin_repair_v1 (ARM64, zero Python dependency)
+# GitHub:   meonnmi-ops/mmc-compiler
+# =================================================================
+
+# --- Severity Constants ---
+SEVERITY_CRITICAL = 4
+SEVERITY_HIGH = 3
+SEVERITY_MEDIUM = 2
+SEVERITY_LOW = 1
+SEVERITY_INFO = 0
+
+# =================================================================
+# Section 1: Audio System Startup
+# Triggers ia_audio.c: mmc_audio_play_startup()
+# Saing Waing (မြန်မာစံတော်ချိန်) — Traditional Myanmar percussion
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  [AUDIO] ▶ မြန်မာစံတော်ချိန် Saing Waing Startup")
+ပုံနှိပ်("  [AUDIO] ▶ မြန်မာစံတော်ချိန် ခံစီးညာ ညာ ညာ ညာ ညာ")
+ပုံနှိပ်("  [Saing Waing] Startup chime activated")
+ပုံနှိပ်("")
+
+# =================================================================
+# Section 2: Suite Banner
+# =================================================================
+
+ပုံနှိပ်("============================================================")
+ပုံနှိပ်("   MMC Hardware Intelligence Diagnostic Suite v5.0")
+ပုံနှိပ်("   Phase 5: Expert Repair Logic + Cultural Audio UI")
+ပုံနှိပ်("   Target:  Qualcomm Snapdragon 4 Gen 2 (ARM64)")
+ပုံနှိပ်("   OS:      HyperOS / Android (Termux Compatible)")
+ပုံနှိပ်("   Audio:   Traditional Saing Waing Instrument Set")
+ပုံနှိပ်("   GitHub:  meonnmi-ops/mmc-compiler")
+ပုံနှိပ်("============================================================")
+
+# =================================================================
+# Section 3: Device Information
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  Device:      Redmi Note 12R (23026RN0DA)")
+ပုံနှိပ်("  SoC:         Qualcomm Snapdragon 4 Gen 2 (SM4450)")
+ပုံနှိပ်("  Board:       Naya (REV0.1)")
+ပုံနှိပ်("  Symptom:     No power, no display, no vibration")
+ပုံနှိပ်("  Battery:     5000mAh Li-Po (3.85V nominal)")
+ပုံနှိပ်("  Technician:  MMC AI Expert System")
+ပုံနှိပ်("")
+
+# =================================================================
+# Data Tables — Redmi Note 12R (Naya REV0.1)
+# 14 voltage rails for Snapdragon 4 Gen 2 (SM4450)
+# =================================================================
+
+rail_names = ["VCC_MAIN", "VCC_BATT", "VSYS", "VDD_CPU", "VDD_MEM", "VDD_GPU", "VDD_MAIN", "VDD_IO", "VDD_LCD", "VDD_CAM", "VDD_USB", "VDD_WIFI", "VDD_BT", "VDD_AUD"]
+rail_measured = [3850, 3820, 3720, 0, 12, 0, 0, 1802, 0, 0, 3290, 1798, 1795, 0]
+rail_nominal = [3800, 3800, 3700, 950, 1100, 800, 1100, 1800, 3100, 1200, 3300, 1800, 1800, 1800]
+rail_min = [3600, 3500, 3400, 900, 1050, 750, 1050, 1700, 2800, 1100, 3000, 1700, 1700, 1700]
+rail_max = [4200, 4300, 4200, 1050, 1200, 900, 1150, 1900, 3300, 1300, 3600, 1900, 1900, 1900]
+
+short_rail = ["VCC_MAIN", "VCC_BATT", "VDD_CPU", "VDD_MEM", "VDD_MAIN", "VDD_IO"]
+short_measured = [890, 950, 5, 6, 4, 1250]
+short_threshold = [50, 50, 80, 100, 80, 150]
+
+cap_names = ["C7410", "C7411", "C7412", "C7310"]
+cap_ratings = ["100uF 6.3V MLCC", "100uF 6.3V MLCC", "47uF 6.3V MLCC", "22uF 10V MLCC"]
+cap_values = [4, 4, 4, 850]
+cap_rails = ["VDD_MAIN", "VDD_MAIN", "VDD_CPU", "VDD_CPU"]
+
+fault_log = []
+
+# =================================================================
+# Fault Logging Function
+# =================================================================
+
+အဓိပ္ပာယ် add_fault(severity, component, description):
+    fault_log.append({"severity": severity, "component": component, "description": description})
+
+# =================================================================
+# Phase 1/4: Voltage Rail Analysis
+# 14 rails for Snapdragon 4 Gen 2
+# =================================================================
+
+ပုံနှိပ်("  [Phase 1/4] Voltage Rail Analysis (14 Rails)")
+ပုံနှိပ်("  ------------------------------------------------")
+ပုံနှိပ်("  Rail         Measured   Nominal   Status")
+ပုံနှိပ်("  ----         --------   -------   ------")
+
+အတွက် i ထဲတွင် ပတ်လမ်း(len(rail_names)):
+    ကိန်း name = rail_names[i]
+    ကိန်း measured = rail_measured[i]
+    ကိန်း nominal = rail_nominal[i]
+    ကိန်း vmin = rail_min[i]
+    ကိန်း vmax = rail_max[i]
+    ကိန်း status = "[OK]    "
+    ကိန်း deviation = 0
+    အကယ်၍ nominal > 0:
+        deviation = (measured - nominal) * 100 / nominal
+    အကယ်၍ measured == 0:
+        status = "[FAIL]  "
+        ပုံနှိပ်("  " + name + "       " + str(measured) + " mV    " + str(nominal) + " mV   " + status + " NO POWER")
+        add_fault(SEVERITY_CRITICAL, name, "NO POWER (0mV)")
+        ပုံနှိပ်("  [AUDIO] ♪ မောင်း GONG - Critical fault detected!")
+    မဟုတ်ပါက:
+        အကယ်၍ measured > 0 and measured < vmin * 10 / 100:
+            status = "[SHORT] "
+            ပုံနှိပ်("  " + name + "       " + str(measured) + " mV    " + str(nominal) + " mV   " + status + " SHORT CIRCUIT")
+            add_fault(SEVERITY_CRITICAL, name, "SHORT CIRCUIT (" + str(measured) + "mV)")
+            ပုံနှိပ်("  [AUDIO] ♪ မောင်း GONG - Critical short detected!")
+        မဟုတ်ပါက:
+            အကယ်၍ measured < vmin:
+                status = "[WARN]  "
+                ပုံနှိပ်("  " + name + "       " + str(measured) + " mV    " + str(nominal) + " mV   " + status + " Under-voltage")
+                add_fault(SEVERITY_HIGH, name, "Under-voltage " + str(measured) + "mV")
+            မဟုတ်ပါက:
+                အကယ်၍ measured > vmax:
+                    status = "[WARN]  "
+                    ပုံနှိပ်("  " + name + "       " + str(measured) + " mV    " + str(nominal) + " mV   " + status + " Over-voltage")
+                    add_fault(SEVERITY_HIGH, name, "Over-voltage " + str(measured) + "mV")
+                မဟုတ်ပါက:
+                    ပုံနှိပ်("  " + name + "       " + str(measured) + " mV    " + str(nominal) + " mV   " + status + " OK (" + str(deviation) + "%)")
+
+# Phase 1 complete — transition audio
+ပုံနှိပ်("")
+ပုံနှိပ်("  [AUDIO] ♪ ဝါးလက်ခုပ် Waing Clap - Analyzing...")
+ပုံနှိပ်("")
+
+# =================================================================
+# Phase 2/4: Short-Circuit Detection (6 Rails)
+# =================================================================
+
+ပုံနှိပ်("  [Phase 2/4] Short-Circuit Detection (6 Rails)")
+ပုံနှိပ်("  --------------------------------------------")
+ပုံနှိပ်("  Rail         Resistance  Threshold  Status")
+ပုံနှိပ်("  ----         ---------  ---------  ------")
+
+short_count = 0
+
+အတွက် i ထဲတွင် ပတ်လမ်း(len(short_rail)):
+    ကိန်း rail = short_rail[i]
+    ကိန်း res = short_measured[i]
+    ကိန်း threshold = short_threshold[i]
+    အကယ်၍ res < threshold:
+        ပုံနှိပ်("  " + rail + "       " + str(res) + " mohm    < " + str(threshold) + " mohm    [SHORT] *** SHORT ***")
+        add_fault(SEVERITY_CRITICAL, rail, "SHORT " + str(res) + " mohm")
+        ပုံနှိပ်("  [AUDIO] ♪ မောင်း GONG STRIKE - SHORT on " + rail + ": " + str(res) + " mohm")
+        short_count = short_count + 1
+    မဟုတ်ပါက:
+        ပုံနှိပ်("  " + rail + "       " + str(res) + " mohm     " + str(threshold) + " mohm    [OK]")
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  Short-circuit count: " + str(short_count) + " rail(s) affected")
+
+# =================================================================
+# Phase 3/4: Component-Level Analysis
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  [Phase 3/4] Component-Level Analysis")
+ပုံနှိပ်("  ------------------------------------")
+ပုံနှိပ်("")
+
+# IC Analysis for Snapdragon 4 Gen 2
+ပုံနှိပ်("  IC Components (SM4450 SoC Complex):")
+ပုံနှိပ်("  --------------------------------------")
+ပုံနှိပ်("  U7400 (PMIC - PM8150B): VCC_MAIN=3850mV OK,   VDD_CPU=0mV NO POWER")
+ပုံနှိပ်("  U7300 (CPU - SM4450):   VDD_CPU=0mV,         VDD_GPU=0mV,         VDD_MEM=12mV SHORT")
+ပုံနှိပ်("  U7600 (NAND):           VDD_MEM=12mV SHORT")
+ပုံနှိပ်("  U7200 (RF):             VDD_IO=1802mV OK")
+ပုံနှိပ်("")
+
+add_fault(SEVERITY_CRITICAL, "U7400/PMIC", "Core rails disabled - overcurrent protection active")
+add_fault(SEVERITY_CRITICAL, "U7300/CPU", "No core voltage - VDD_CPU/VDD_GPU/VDD_MAIN all zero")
+add_fault(SEVERITY_CRITICAL, "U7600/NAND", "VDD_MEM short 12mV through data bus")
+
+# Capacitor Analysis
+ပုံနှိပ်("  Decoupling Capacitors Analysis:")
+ပုံနှိပ်("  -----------------------------")
+ပုံနှိပ်("  Capacitor     Rating                Rail       Value    Status")
+ပုံနှိပ်("  ---------     ------                ----       -----    ------")
+
+အတွက် i ထဲတွင် ပတ်လမ်း(len(cap_names)):
+    ကိန်း val = cap_values[i]
+    ကိန်း result = "SHORTED"
+    အကယ်၍ val >= 1000:
+        result = "LOW"
+    အကယ်၍ val >= 100000:
+        result = "OK"
+    ပုံနှိပ်("  " + cap_names[i] + "       " + cap_ratings[i] + "  " + cap_rails[i] + "      " + str(val) + " ohm   " + result)
+    အကယ်၍ result == "SHORTED":
+        add_fault(SEVERITY_CRITICAL, cap_names[i], "SHORTED " + str(val) + " ohm on " + cap_rails[i])
+
+# Pull-up Resistor check
+ပုံနှိပ်("")
+ပုံနှိပ်("  Pull-up Resistors:")
+ပုံနှိပ်("    R7401 (PMIC enable, 100K 0402): 98500 ohm -> OK")
+ပုံနှိပ်("    R7301 (CPU enable,  100K 0402): 99200 ohm -> OK")
+
+# Phase 3 complete audio
+ပုံနှိပ်("")
+ပုံနှိပ်("  [AUDIO] ♪ ချင်းချင်း Kyee Kyee Tone - Component analysis done")
+
+# =================================================================
+# Fault Summary (pre-AI)
+# =================================================================
+
+total_faults = len(fault_log)
+critical_count = 0
+high_count = 0
+medium_count = 0
+
+အတွက် i ထဲတွင် ပတ်လမ်း(len(fault_log)):
+    ကိန်း f = fault_log[i]
+    အကယ်၍ f["severity"] == SEVERITY_CRITICAL:
+        critical_count = critical_count + 1
+    အကယ်၍ f["severity"] == SEVERITY_HIGH:
+        high_count = high_count + 1
+    အကယ်၍ f["severity"] == SEVERITY_MEDIUM:
+        medium_count = medium_count + 1
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  Pre-AI Fault Summary")
+ပုံနှိပ်("  ---------------------")
+ပုံနှိပ်("  Total:     " + str(total_faults) + " fault(s) detected")
+ပုံနှိပ်("  CRITICAL:  " + str(critical_count))
+ပုံနှိပ်("  HIGH:      " + str(high_count))
+ပုံနှိပ်("  MEDIUM:    " + str(medium_count))
+
+# =================================================================
+# Phase 4/4: AI Expert Analysis (4 Cognition Cycles)
+# =================================================================
+
+ပုံနှိပ်("")
+ပုံနှိပ်("  [Phase 4/4] AI Expert Analysis (4 Cognition Cycles)")
+ပုံနှိပ်("  ---------------------------------------------------")
+ပုံနှိပ်("")
+
+# --- AI Cycle 1: Think (စဉ်းစားပါ) ---
+ပုံနှိပ်("  [AI Cycle 1/4] ကြိုဆိုင် Think()")
+ပုံနှိပ်("  -----------------")
+
+အေအိုင်AI.စဉ်းစားပါ("Snapdragon 4 Gen 2 (SM4450) diagnostic: VDD_CPU=0mV, VDD_GPU=0mV, VDD_MEM=12mV, VDD_MAIN=0mV. VCC_MAIN=3850mV healthy. PMIC U7400 VCC_MAIN input OK but all core outputs zero - overcurrent protection active. VDD_MAIN resistance=4mohm indicates HARD SHORT. VDD_CPU resistance=5mohm also shorted. Pattern consistent with MLCC decoupling cap failure near CPU/GPU power islands.")
+
+ပုံနှိပ်("")
+
+# --- AI Cycle 2: Analyze (ခွဲခြမ်းပါ) ---
+ပုံနှိပ်("  [AI Cycle 2/4] သုံးသပ်ခြင်း Analyze()")
+
+အေအိုင်AI.ခွဲခြမ်းပါ("Half-split method for VDD_MAIN short: Phase 1 - Remove C7410 (100uF near CPU VDD_MAIN pin). Phase 2 - Measure resistance. If >500mohm: C7410 is culprit, replace with 100uF 6.3V X5R 0402. If still short: remove C7411. Phase 3 - If C7411 also shorted, check PCB via condition. VDD_CPU short likely cascade from VDD_MAIN short - clear VDD_MAIN first.")
+
+ပုံနှိပ်("")
+
+# --- AI Cycle 3: Describe (ရှင်းပြပါ) ---
+ပုံနှိပ်("  [AI Cycle 3/4] ထုတ်လုပ်ရေး Describe()")
+
+အေအိုင်AI.ရှင်းပြပါ("Repair Procedure (Professional): Step 1 - Apply no-clean flux to C7410/C7411 area. Step 2 - Preheat board to 120C (prevent thermal shock). Step 3 - Hot air 240C, 5mm nozzle, 5-7 seconds over C7410. Step 4 - Lift with curved tweezers. Step 5 - Measure VDD_MAIN resistance. Step 6 - If >500mohm: short cleared, clean pads with IPA. Step 7 - Apply flux, place new 100uF 6.3V X5R MLCC 0402. Step 8 - Hot air reflow 240C, verify joint. Step 9 - Same for C7411 if needed. Step 10 - Power on, verify VDD_MAIN=1.1V, VDD_CPU=0.95V, VDD_MEM=1.1V.")
+
+ပုံနှိပ်("")
+
+# --- AI Cycle 4: Explain (ဖော်ပြပါ) ---
+ပုံနှိပ်("  [AI Cycle 4/4] ဖော်ပြရန် Explain()")
+
+အေအိုင်AI.ဖော်ပြပါ("Root Cause Analysis: SM4450 (Snapdragon 4 Gen 2) manufactured on TSMC 4nm process. MLCC ceramic capacitors (BaTiO3) are susceptible to micro-cracking from mechanical stress (drop impact, board flex). Micro-cracks create conductive paths through the ceramic dielectric, causing hard short to ground. PMIC detects overcurrent (>3A typical for VDD_MAIN short) and disables all core rails as protection. PMIC U7400 is functional - confirmed by healthy VCC_MAIN input and VDD_IO output. Repair requires hot air rework station (recommended: Hakko FR-810B), 0402 soldering capability, and spare MLCC caps (Samsung CL05B104KO5NNNC or equivalent). Estimated repair time: 30-45 minutes. Success rate: 95% if only MLCC failure.")
+
+ပုံနှိပ်("")
+
+# =================================================================
+# Audio Success + Completion Sequence
+# =================================================================
+
+ပုံနှိပ်("  [AUDIO] ♪ နှဲ Oboe Melody - Analysis Complete")
+ပုံနှိပ်("  [AUDIO] ♪ Completion Tone")
+ပုံနှိပ်("")
+
+# =================================================================
+# Detailed Findings
+# =================================================================
+
+အကယ်၍ total_faults > 0:
+    ပုံနှိပ်("  Detailed Findings (" + str(total_faults) + " faults):")
+    ပုံနှိပ်("  -------------------------")
+    အတွက် i ထဲတွင် ပတ်လမ်း(len(fault_log)):
+        ကိန်း f = fault_log[i]
+        ကိန်း sev_str = "CRITICAL"
+        အကယ်၍ f["severity"] == SEVERITY_HIGH:
+            sev_str = "HIGH"
+        အကယ်၍ f["severity"] == SEVERITY_MEDIUM:
+            sev_str = "MEDIUM"
+        ပုံနှိပ်("  " + str(i + 1) + ". [" + sev_str + "] " + f["component"] + ": " + f["description"])
+    ပုံနှိပ်("")
+
+# =================================================================
+# Section 9: Final Report — Phase 5 Expert Summary
+# =================================================================
+
+ပုံနှိပ်("============================================================")
+ပုံနှိပ်("  DIAGNOSIS COMPLETE - PHASE 5 EXPERT REPORT")
+ပုံနှိပ်("  Device:     Redmi Note 12R (SM4450 / Snapdragon 4 Gen 2)")
+ပုံနှိပ်("  Primary:    VDD_MAIN Short Circuit (4 mohm) - CRITICAL")
+ပုံနှိပ်("  Secondary:  VDD_CPU Short (5 mohm) - CRITICAL")
+ပုံနှိပ်("  Suspects:   C7410, C7411, C7412 (MLCC decoupling)")
+ပုံနှိပ်("  Method:     Half-split isolation (2-3 iterations)")
+ပုံနှိပ်("  Repair:     Hot air rework + MLCC replacement")
+ပုံနှိပ်("  Time:       30-45 min | Difficulty: Medium")
+ပုံနှိပ်("  Tools:      Hakko FR-810B, hot air 240C, flux, IPA")
+ပုံနှိပ်("  Parts:      100uF 6.3V X5R MLCC 0402 (Samsung/Murata)")
+ပုံနှိပ်("  AI:         4 cognition cycles complete")
+ပုံနှိပ်("  Audio:      Saing Waing 5-instrument set active")
+ပုံနှိပ်("  Binary:     nyanlin_repair_v1 (ARM64, zero Python)")
+ပုံနှိပ်("============================================================")
