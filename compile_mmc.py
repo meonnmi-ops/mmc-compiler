@@ -131,22 +131,29 @@ def stage_parse(tokens, source_name="<mmc>"):
     return ast, parser
 
 
-def stage_codegen(ast, source_name="<mmc>"):
-    """Stage 3: Code Generation — AST -> Python Source Code.
+def stage_codegen(ast, source_name="<mmc>", target="python"):
+    """Stage 3: Code Generation — AST -> Python or C Source Code.
 
-    Uses mmc_codegen.mmc (MMCCodeGenerator) to generate Python code.
+    Uses mmc_codegen.mmc (Python) or mmc_c_codegen.mmc (C) to generate code.
 
     Data Contract Input:
         AST dict from mmc_parser.mmc with "type" fields matching
         mmc_codegen.mmc NODE_* constants.
 
     Data Contract Output:
-        String of valid Python 3 source code.
+        target="python": String of valid Python 3 source code.
+        target="c":      String of valid C99 source code.
 
     IA Handling:
         {"type": "IACall", "method": "say", "args": [...]}
-        -> "__mmc_ai__.say(...)"
+        Python: "__mmc_ai__.say(...)"
+        C:      "__mmc_ai__.say(...)"  (via ia_bridge.c)
     """
+    if target == "c":
+        codegen_mod = load_mmc_module("mmc_c_codegen", os.path.join(SELFHOSTED_DIR, "mmc_c_codegen.mmc"))
+        code = codegen_mod.generate_c_code(ast.get("body", []))
+        return code, codegen_mod
+
     codegen_mod = load_mmc_module("mmc_codegen", os.path.join(SELFHOSTED_DIR, "mmc_codegen.mmc"))
     codegen = codegen_mod.MMCCodeGenerator()
     python_code = codegen.generate_program(ast.get("body", []))
@@ -164,7 +171,7 @@ def stage_codegen(ast, source_name="<mmc>"):
 # Full Pipeline
 # =================================================================
 
-def compile_mmc(source, source_name="<mmc>", show_tokens=False, show_ast=False):
+def compile_mmc(source, source_name="<mmc>", show_tokens=False, show_ast=False, target="python"):
     """Run the complete MMC-Native Compiler pipeline.
 
     Pipeline:
@@ -180,7 +187,8 @@ def compile_mmc(source, source_name="<mmc>", show_tokens=False, show_ast=False):
         Tuple of (python_code, tokens, ast, lexer, parser, codegen)
     """
     print("=" * 60, file=sys.stderr)
-    print("MMC Native Pipeline v1.0", file=sys.stderr)
+    target_label = "C99" if target == "c" else "Python 3"
+    print("MMC Native Pipeline v4.0 (target: %s)" % target_label, file=sys.stderr)
     print("=" * 60, file=sys.stderr)
 
     # Stage 1: Lex
@@ -206,11 +214,11 @@ def compile_mmc(source, source_name="<mmc>", show_tokens=False, show_ast=False):
         print(json.dumps(ast, indent=2, ensure_ascii=False, default=str))
 
     # Stage 3: CodeGen
-    print("[Stage 3/3] Code Generation...", file=sys.stderr)
-    python_code, codegen = stage_codegen(ast, source_name)
+    print("[Stage 3/3] Code Generation (%s)..." % target_label, file=sys.stderr)
+    python_code, codegen = stage_codegen(ast, source_name, target=target)
 
-    # Inject __mmc_ai__ stub if IA calls are present
-    if "__mmc_ai__" in python_code:
+    # Inject __mmc_ai__ stub if IA calls are present (Python only)
+    if target == "python" and "__mmc_ai__" in python_code:
         ia_stub = (
             "# Auto-generated IA bridge stub (Phase 3.6)\n"
             "class _MMC_AI_Bridge:\n"
@@ -292,11 +300,12 @@ def main():
     args = sys.argv[1:]
 
     if not args:
-        print("MMC Native Pipeline v1.0")
+        print("MMC Native Pipeline v4.0")
         print("Usage: python3 compile_mmc.py <file.mmc> [options]")
         print("")
         print("Options:")
         print("  --run       Compile and execute the output")
+        print("  --c         Generate C code instead of Python")
         print("  --ast       Show the parsed AST")
         print("  --tokens    Show the token stream")
         print("  -c <code>   Compile inline MMC code")
@@ -308,6 +317,7 @@ def main():
     show_tokens = "--tokens" in args
     do_run = "--run" in args
     do_compare = "--compare" in args
+    do_c = ("--c" in args) and ("-c" not in args)
     inline_mode = "-c" in args
 
     # Filter out flags
@@ -329,13 +339,15 @@ def main():
         sys.exit(1)
 
     # Run the pipeline
+    target = "c" if do_c else "python"
     python_code, tokens, ast, lexer, parser, codegen = compile_mmc(
-        source, source_name, show_tokens=show_tokens, show_ast=show_ast
+        source, source_name, show_tokens=show_tokens, show_ast=show_ast, target=target
     )
 
-    # Output generated Python code
+    # Output generated code
+    lang_label = "C" if do_c else "Python"
     print("\n" + "=" * 60)
-    print("Generated Python Code:")
+    print("Generated %s Code:" % lang_label)
     print("=" * 60)
     print(python_code)
 
