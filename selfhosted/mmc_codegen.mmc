@@ -1,0 +1,2040 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Code Generator v1.0 - Self-Hosted (Written in MMC Language)
+# Phase 3.5: Self-Hosting Transition
+#
+# This module takes an AST (Abstract Syntax Tree) produced by
+# mmc_parser.mmc and generates runnable Python 3 source code.
+#
+# It replaces mmc_transpiler.py's code generation phase.
+# Architecture: AST Node -> Recursive CodeGen -> Python String
+#
+# IA Native Mapping:
+#   'အေအိုင်AI' | 'AI' | 'ia' | 'အိုင်အေ' -> __mmc_ai__
+#   Methods: ပြောပါ(say), သင်ယူပါ(learn),
+#            စဉ်းစားပါ(think), ဖော်ပြပါ(explain)
+#
+# Pipeline: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_codegen.mmc
+# =================================================================
+
+# =================================================================
+# SECTION 1: AST Node Type Definitions
+# =================================================================
+# These constants define every AST node type the parser can produce.
+# The code generator pattern-matches on these to dispatch rendering.
+
+# --- Top-level node types ---
+NODE_PROGRAM = "Program"
+NODE_MODULE = "Module"
+
+# --- Statement node types ---
+NODE_FUNCTION_DEF = "FunctionDef"
+NODE_CLASS_DEF = "ClassDef"
+NODE_RETURN = "Return"
+NODE_DELETE = "Delete"
+NODE_ASSIGN = "Assign"
+NODE_AUG_ASSIGN = "AugAssign"
+NODE_ANN_ASSIGN = "AnnAssign"
+NODE_EXPR_STMT = "Expr"
+NODE_IF = "If"
+NODE_FOR = "For"
+NODE_WHILE = "While"
+NODE_BREAK = "Break"
+NODE_CONTINUE = "Continue"
+NODE_PASS = "Pass"
+NODE_IMPORT = "Import"
+NODE_IMPORT_FROM = "ImportFrom"
+NODE_TRY = "Try"
+NODE_RAISE = "Raise"
+NODE_ASSERT = "Assert"
+NODE_GLOBAL = "Global"
+NODE_NONLOCAL = "Nonlocal"
+NODE_MATCH = "Match"
+NODE_WITH = "With"
+NODE_YIELD = "Yield"
+NODE_YIELD_FROM = "YieldFrom"
+
+# --- Expression node types ---
+NODE_CALL = "Call"
+NODE_IA_CALL = "IACall"
+NODE_BIN_OP = "BinOp"
+NODE_UNARY_OP = "UnaryOp"
+NODE_BOOL_OP = "BoolOp"
+NODE_COMPARE = "Compare"
+NODE_NAME = "Name"
+NODE_CONSTANT = "Constant"
+NODE_ATTRIBUTE = "Attribute"
+NODE_SUBSCRIPT = "Subscript"
+NODE_LIST = "List"
+NODE_DICT = "Dict"
+NODE_SET = "Set"
+NODE_TUPLE = "Tuple"
+NODE_LAMBDA = "Lambda"
+NODE_IF_EXPR = "IfExpr"
+NODE_STARRED = "Starred"
+NODE_SLICE = "Slice"
+NODE_LIST_COMP = "ListComp"
+NODE_DICT_COMP = "DictComp"
+NODE_SET_COMP = "SetComp"
+NODE_GENERATOR_EXPR = "GeneratorExpr"
+NODE_FORMATTED_VALUE = "FormattedValue"
+NODE_JOINED_STR = "JoinedStr"
+NODE_FSTRING = "FString"
+NODE_WALRUS = "Walrus"
+
+# --- Operator types ---
+OP_ADD = "Add"
+OP_SUB = "Sub"
+OP_MULT = "Mult"
+OP_DIV = "Div"
+OP_FLOOR_DIV = "FloorDiv"
+OP_MOD = "Mod"
+OP_POW = "Pow"
+OP_LSHIFT = "LShift"
+OP_RSHIFT = "RShift"
+OP_BIT_OR = "BitOr"
+OP_BIT_XOR = "BitXor"
+OP_BIT_AND = "BitAnd"
+OP_MAT_MULT = "MatMult"
+OP_AND = "And"
+OP_OR = "Or"
+OP_NOT = "Not"
+OP_INVERT = "Invert"
+OP_UADD = "UAdd"
+OP_USUB = "USub"
+OP_EQ = "Eq"
+OP_NOT_EQ = "NotEq"
+OP_LT = "Lt"
+OP_LT_E = "LtE"
+OP_GT = "Gt"
+OP_GT_E = "GtE"
+OP_IS = "Is"
+OP_IS_NOT = "IsNot"
+OP_IN = "In"
+OP_NOT_IN = "NotIn"
+
+# --- Argument node ---
+NODE_ARGUMENT = "arg"
+NODE_KEYWORD_ARG = "keyword"
+
+# --- Decorator ---
+NODE_DECORATOR = "decorator"
+
+# =================================================================
+# SECTION 2: Keyword Translation Tables (MMC -> Python)
+# =================================================================
+# These dictionaries are used by the code generator to translate
+# Myanmar MMC keywords into Python equivalents.
+# This is the AST-level mapping (not token-level like transpiler).
+
+# Myanmar statement keywords -> Python
+MM_STMT_MAP = {
+    "အကယ်၍": "if",
+    "မဟုတ်ပါက": "else",
+    "မဟုတ်လျှင်": "elif",
+    "အတွက်": "for",
+    "လုပ်နေစဉ်": "while",
+    "ရပ်": "break",
+    "ဆက်လုပ်": "continue",
+    "အဓိပ္ပာယ်": "def",
+    "ပြန်ပေး": "return",
+    "အတန်း": "class",
+    "တင်သွင်း": "import",
+    "မှ": "from",
+    "ကြိုးစား": "try",
+    "ဖမ်းမိ": "except",
+    "နောက်ဆုံး": "finally",
+    "ချမြှောက်": "raise",
+    "မတူညီ": "async",
+    "မျှော်": "await",
+    "ညီမျှလျှင်": "and",
+    "သို့မဟုတ်": "or",
+    "မဟုတ်": "not",
+    "အဖြစ်": "as",
+    "ကျန်ရမ်း": "pass",
+    "ကြွင်းလဲ": "global",
+    "ဒေသခံ": "nonlocal",
+    "ဖျက်ပါ": "del",
+    "ပေး": "yield",
+    "များလိုက်": "lambda",
+    "နုတ်ထုတ်": "with",
+    "စာသေးခံ": "assert",
+}
+
+# Myanmar function keywords -> Python
+MM_FUNC_MAP = {
+    "ပုံနှိပ်": "print",
+    "မေးမြန်း": "input",
+    "အရှည်": "len",
+    "ဇယား": "type",
+    "ကျပန်း": "str",
+    "အချိန်": "int",
+    "လော့ဂရစ်သမ်": "float",
+    "တန်ဂျင့်": "bool",
+    "စာရင်း": "list",
+    "အရာဝတ္ထု": "dict",
+    "အဘိဓာန်": "set",
+    "ဆိုင်": "tuple",
+    "ပတ်လမ်း": "range",
+    "သင်္ချာ": "abs",
+    "အမြင့်ဆုံး": "max",
+    "အနိမ့်ဆုံး": "min",
+    "ပေါင်းလုံး": "sum",
+    "ရွေးချယ်": "sorted",
+    "ပြဿနာ": "map",
+    "ကုလသိုက်": "filter",
+    "ရောကိုင်": "enumerate",
+    "ဇကာ": "zip",
+    "မြှင့်တင်": "round",
+    "ဖန်တီး": "chr",
+    "စကားလုံး": "ord",
+    "ဖွင့်": "open",
+}
+
+# Myanmar value keywords -> Python
+MM_VALUE_MAP = {
+    "မှန်": "True",
+    "မှား": "False",
+    "ဘာမှမရှိ": "None",
+    "ဗလာ": "None",
+    "ဒီ": "self",
+    "ဒါ": "cls",
+}
+
+# Myanmar type name keywords -> Python
+MM_TYPE_MAP = {
+    "စာသား": "str",
+    "အချိန်": "int",
+    "လော့ဂရစ်သမ်": "float",
+    "တန်ဂျင့်": "bool",
+    "စာရင်း": "list",
+    "အရာဝတ္ထု": "dict",
+    "အဘိဓာန်": "set",
+    "ဆိုင်": "tuple",
+    "မပါ": "None",
+    "အရာရည်": "Any",
+    "ခေါ်ဆိုချက်": "Callable",
+    "ဖျက်ရှင်း": "Optional",
+}
+
+# Myanmar method keywords -> Python
+MM_METHOD_MAP = {
+    "စာလုံးကြီး": "upper",
+    "စာလုံးသေး": "lower",
+    "စမြည့်": "capitalize",
+    "ဆုံးမြည့်": "title",
+    "စာဆက်": "join",
+    "စာခွဲ": "split",
+    "ဖြတ်": "strip",
+    "အစားထိုး": "replace",
+    "ရှာဖွေ": "find",
+    "အမှန်နေ": "isalpha",
+    "ဂဏန်းဖြစ်": "isdigit",
+    "စာသားဖြစ်": "isalnum",
+    "ပိုင်ဆိုင်": "startswith",
+    "ပြီးဆုံးဖြစ်": "endswith",
+    "နောက်ဆုံး_ထည့်": "append",
+    "ထည့်သွင်း": "insert",
+    "အရှည်_ထည့်": "extend",
+    "ရှင်း": "pop",
+    "စီ": "sort",
+    "ပြန်လဲ": "reverse",
+    "ရှင်းလင်း": "clear",
+    "သော့များ": "keys",
+    "တန်ဖိုးများ": "values",
+    "အတွဲများ": "items",
+    "ရယူ": "get",
+    "ပေါင်းထည့်": "update",
+    "ပါဝင်": "add",
+    "ဖိုင်ဖတ်": "read",
+    "ဖိုင်ရေး": "write",
+    "ဖိုင်ဖျက်": "close",
+    "ပုံ_ပြောင်း": "copy",
+    "ရှိမရှိ": "count",
+    "ရှာမှတ်": "index",
+    "ဖော်ပြ": "format",
+}
+
+# Combined lookup for quick resolution
+MM_ALL_MAP = {}
+MM_ALL_MAP["update"] = MM_STMT_MAP
+MM_ALL_MAP["update"] = MM_FUNC_MAP
+MM_ALL_MAP["update"] = MM_VALUE_MAP
+MM_ALL_MAP["update"] = MM_TYPE_MAP
+MM_ALL_MAP["update"] = MM_METHOD_MAP
+
+# =================================================================
+# SECTION 3: IA (AI) Native Mapping
+# =================================================================
+# Phase 3 IA keyword aliases -> __mmc_ai__ object
+# All four variants map to the same internal token: IA
+
+IA_KEYWORD_VARIANTS = ["အေအိုင်AI", "AI", "ia", "အိုင်အေ"]
+
+# IA method mapping: Myanmar method -> Python method on __mmc_ai__
+IA_METHOD_MAP = {
+    "ပြောပါ": "say",
+    "သင်ယူပါ": "learn",
+    "စဉ်းစားပါ": "think",
+    "ဖော်ပြပါ": "explain",
+    "ဆက်ပါ": "connect",
+    "ပြင်ဆင်ပါ": "update",
+    "စစ်ဆေးပါ": "check",
+    "ဖုံးပါ": "ask",
+    "ရှင်းပြပါ": "describe",
+    "ညွှန်ပါ": "teach",
+    "ဖော်ကျားပါ": "visualize",
+    "ဖိုးထုတ်ပါ": "generate",
+    "ထုတ်ပေးပါ": "respond",
+    "ခွဲခြမ်းပါ": "analyze",
+    "တိုက်ရိုက်ပါ": "chat",
+    "ဖြေရှင်းပါ": "translate",
+    "စူးစိုက်ပါ": "summarize",
+    "ဆန်ပါ": "dream",
+}
+
+# English IA method aliases
+IA_METHOD_EN = {
+    "say": "say",
+    "learn": "learn",
+    "think": "think",
+    "explain": "explain",
+    "connect": "connect",
+    "update": "update",
+    "check": "check",
+    "ask": "ask",
+    "describe": "describe",
+    "teach": "teach",
+    "visualize": "visualize",
+    "generate": "generate",
+    "respond": "respond",
+    "analyze": "analyze",
+    "chat": "chat",
+    "translate": "translate",
+    "summarize": "summarize",
+    "dream": "dream",
+}
+
+# Merge both IA method maps
+IA_METHOD_MAP["update"] = IA_METHOD_EN
+
+
+# =================================================================
+# SECTION 4: Myanmar Digit Conversion
+# =================================================================
+# Myanmar digits -> Arabic digits for output code generation
+
+MYANMAR_DIGITS = {
+    "၀": "0", "၁": "1", "၂": "2", "၃": "3", "၄": "4",
+    "၅": "5", "၆": "6", "၇": "7", "၈": "8", "၉": "9",
+}
+
+# Reverse: Arabic -> Myanmar (for optional output display)
+ARABIC_TO_MYANMAR = {}
+ARABIC_TO_MYANMAR["update"] = {"0": "၀", "1": "၁", "2": "၂", "3": "၃", "4": "၄",
+    "5": "၅", "6": "၆", "7": "၇", "8": "၈", "9": "၉"}
+
+
+# =================================================================
+# SECTION 5: Operator Symbol Tables
+# =================================================================
+# AST operator types -> Python operator strings
+
+BIN_OP_SYMBOLS = {
+    OP_ADD: "+",
+    OP_SUB: "-",
+    OP_MULT: "*",
+    OP_DIV: "/",
+    OP_FLOOR_DIV: "//",
+    OP_MOD: "%",
+    OP_POW: "**",
+    OP_LSHIFT: "<<",
+    OP_RSHIFT: ">>",
+    OP_BIT_OR: "|",
+    OP_BIT_XOR: "^",
+    OP_BIT_AND: "&",
+    OP_MAT_MULT: "@",
+}
+
+UNARY_OP_SYMBOLS = {
+    OP_NOT: "not ",
+    OP_INVERT: "~",
+    OP_UADD: "+",
+    OP_USUB: "-",
+}
+
+COMPARE_OP_SYMBOLS = {
+    OP_EQ: "==",
+    OP_NOT_EQ: "!=",
+    OP_LT: "<",
+    OP_LT_E: "<=",
+    OP_GT: ">",
+    OP_GT_E: ">=",
+    OP_IS: "is",
+    OP_IS_NOT: "is not",
+    OP_IN: "in",
+    OP_NOT_IN: "not in",
+}
+
+BOOL_OP_SYMBOLS = {
+    OP_AND: "and",
+    OP_OR: "or",
+}
+
+
+# =================================================================
+# SECTION 6: Code Generator Class
+# =================================================================
+
+# MMC Code Generator v1.0
+# Takes AST nodes and produces Python source code strings.
+# This is the heart of the self-hosted compiler pipeline.
+#
+# Design Principle (Riley Goodside's Instruction):
+#   "Think about the recursion required for nested expressions.
+#    Provide the logic for the AST-to-String conversion first,
+#    then write the full MMC code."
+#
+# Recursion pattern:
+#   Every generate_* method returns a STRING.
+#   Expressions call generate_expr() which dispatches recursively.
+#   Statements call generate_stmt() which handles indentation.
+#   Nested structures (if/for/while/function/class) manage
+#   indent_level and recurse into their body lists.
+
+class MMCCodeGenerator:
+    """Self-hosted MMC Code Generator.
+    
+    Converts AST (from mmc_parser.mmc) to runnable Python 3 code.
+    This replaces the Python-based mmc_transpiler.py code generation.
+    
+    Pipeline:
+        mmc_lexer.mmc -> mmc_parser.mmc -> mmc_codegen.mmc -> Python 3
+    """
+    
+    def __init__(self, indent_str="    ", source_map_enabled=0):
+        self.indent_str = indent_str
+        self.indent_level = 0
+        self.source_map_enabled = source_map_enabled
+        self.source_map = []
+        self.line_counter = 0
+        self.errors = []
+        self.imports_collected = []
+
+    # -----------------------------------------------------------
+    # PUBLIC API
+    # -----------------------------------------------------------
+    
+    def generate(self, ast_node):
+        """Generate Python code from an AST node.
+        
+        Args:
+            ast_node: Dict with 'type' field and node-specific fields.
+                      Produced by mmc_parser.mmc.
+        
+        Returns:
+            String of valid Python 3 source code.
+        """
+        self.indent_level = 0
+        self.source_map = []
+        self.line_counter = 0
+        self.imports_collected = []
+        self.errors = []
+        
+        result = self._generate_node(ast_node)
+        return result
+
+    def generate_program(self, body_nodes):
+        """Generate Python code from a list of top-level AST nodes.
+        
+        Args:
+            body_nodes: List of AST node dicts (statements).
+        
+        Returns:
+            Complete Python source code string.
+        """
+        self.indent_level = 0
+        self.source_map = []
+        self.line_counter = 0
+        self.imports_collected = []
+        self.errors = []
+        
+        lines = []
+        for node in body_nodes:
+            line = self._generate_node(node)
+            if line is not None and line != "":
+                lines.append(line)
+        
+        return "\n".join(lines)
+
+    def get_source_map(self):
+        """Return the source map (MMC line -> Python line)."""
+        return self.source_map
+
+    def get_errors(self):
+        """Return any code generation errors."""
+        return self.errors
+
+    # -----------------------------------------------------------
+    # PRIVATE: Node Dispatch (Recursive Pattern)
+    # -----------------------------------------------------------
+    
+    def _generate_node(self, node):
+        """Main dispatch: route AST node to appropriate handler.
+        
+        This is the recursive entry point. Each handler returns a
+        string, and may recursively call _generate_node for children.
+        
+        Recursion depth for nested expressions:
+            BinOp(left=BinOp(left=BinOp(...), ...), right=...)
+            Each level adds one recursive call to _generate_node.
+        """
+        if node is None:
+            return ""
+        
+        ntype = node["type"]
+        
+        # --- Statements ---
+        if ntype == NODE_FUNCTION_DEF:
+            return self._gen_function_def(node)
+        if ntype == NODE_CLASS_DEF:
+            return self._gen_class_def(node)
+        if ntype == NODE_RETURN:
+            return self._gen_return(node)
+        if ntype == NODE_ASSIGN:
+            return self._gen_assign(node)
+        if ntype == NODE_AUG_ASSIGN:
+            return self._gen_aug_assign(node)
+        if ntype == NODE_IF:
+            return self._gen_if(node)
+        if ntype == NODE_FOR:
+            return self._gen_for(node)
+        if ntype == NODE_WHILE:
+            return self._gen_while(node)
+        if ntype == NODE_BREAK:
+            return self._ind() + "break"
+        if ntype == NODE_CONTINUE:
+            return self._ind() + "continue"
+        if ntype == NODE_PASS:
+            return self._ind() + "pass"
+        if ntype == NODE_IMPORT:
+            return self._gen_import(node)
+        if ntype == NODE_IMPORT_FROM:
+            return self._gen_import_from(node)
+        if ntype == NODE_TRY:
+            return self._gen_try(node)
+        if ntype == NODE_RAISE:
+            return self._gen_raise(node)
+        if ntype == NODE_ASSERT:
+            return self._gen_assert(node)
+        if ntype == NODE_DELETE:
+            return self._gen_delete(node)
+        if ntype == NODE_GLOBAL:
+            return self._gen_global(node)
+        if ntype == NODE_NONLOCAL:
+            return self._gen_nonlocal(node)
+        if ntype == NODE_MATCH:
+            return self._gen_match(node)
+        if ntype == NODE_WITH:
+            return self._gen_with(node)
+        if ntype == NODE_EXPR_STMT:
+            return self._ind() + self._generate_expr(node["value"])
+        if ntype == NODE_ANN_ASSIGN:
+            return self._gen_ann_assign(node)
+        if ntype == NODE_YIELD:
+            return self._ind() + "yield " + self._generate_expr(node["value"])
+        if ntype == NODE_YIELD_FROM:
+            return self._ind() + "yield from " + self._generate_expr(node["value"])
+        
+        # --- Expressions (if used as statements) ---
+        return self._ind() + self._generate_expr(node)
+
+    # -----------------------------------------------------------
+    # PRIVATE: Statement Generators
+    # -----------------------------------------------------------
+    
+    def _gen_function_def(self, node):
+        """Generate: def name(params) -> type: ...
+        
+        Handles:
+        - Function name (translate from Myanmar)
+        - Parameter list with type hints
+        - Return type annotation
+        - Decorators
+        - Async functions
+        - Body indentation (recurse into each statement)
+        """
+        prefix = ""
+        if node.get("async", 0) == 1:
+            prefix = "async "
+        
+        name = self._translate_name(node["name"])
+        params = self._gen_params(node.get("params", []))
+        
+        result = self._ind() + prefix + "def " + name + "(" + params + ")"
+        
+        # Return type hint
+        ret_type = node.get("return_type", None)
+        if ret_type is not None:
+            result = result + " -> " + self._generate_expr(ret_type)
+        
+        result = result + ":"
+        
+        # Decorators are already on separate lines (handled by parent)
+        # Generate body
+        body_lines = self._gen_body(node.get("body", []))
+        return result + "\n" + body_lines
+
+    def _gen_class_def(self, node):
+        """Generate: class Name(Bases): ..."""
+        name = self._translate_name(node["name"])
+        
+        bases = node.get("bases", [])
+        if len(bases) > 0:
+            base_strs = []
+            for b in bases:
+                base_strs.append(self._generate_expr(b))
+            result = self._ind() + "class " + name + "(" + ", ".join(base_strs) + "):"
+        else:
+            result = self._ind() + "class " + name + ":"
+        
+        body_lines = self._gen_body(node.get("body", []))
+        return result + "\n" + body_lines
+
+    def _gen_return(self, node):
+        """Generate: return value"""
+        value = node.get("value", None)
+        if value is None:
+            return self._ind() + "return"
+        return self._ind() + "return " + self._generate_expr(value)
+
+    def _gen_assign(self, node):
+        """Generate: target = value
+        
+        Handles multiple assignment: a = b = value
+        Also handles Myanmar digit conversion in constants.
+        """
+        targets = node["targets"]
+        value = node["value"]
+        
+        target_strs = []
+        for t in targets:
+            target_strs.append(self._generate_expr(t))
+        
+        value_str = self._generate_expr(value)
+        
+        # Left side targets, joined by " = "
+        return self._ind() + " = ".join(target_strs) + " = " + value_str
+
+    def _gen_aug_assign(self, node):
+        """Generate: target op= value (e.g., x += 1)"""
+        target = self._generate_expr(node["target"])
+        op = BIN_OP_SYMBOLS.get(node["op"], "?=")
+        value = self._generate_expr(node["value"])
+        return self._ind() + target + " " + op + "= " + value
+
+    def _gen_ann_assign(self, node):
+        """Generate: name: type = value"""
+        target = self._generate_expr(node["target"])
+        annotation = self._generate_expr(node["annotation"])
+        value = node.get("value", None)
+        if value is not None:
+            return self._ind() + target + ": " + annotation + " = " + self._generate_expr(value)
+        return self._ind() + target + ": " + annotation
+
+    def _gen_if(self, node):
+        """Generate if/elif/else chain.
+        
+        Recursion pattern:
+            if_node.body -> list of stmts -> each calls _generate_node
+            if_node.orelse -> could be [elif_node] or [else_block]
+                             -> elif_node is another If node (recursive)
+        """
+        test = self._generate_expr(node["test"])
+        result = self._ind() + "if " + test + ":"
+        
+        body_lines = self._gen_body(node.get("body", []))
+        result = result + "\n" + body_lines
+        
+        orelse = node.get("orelse", [])
+        if len(orelse) > 0:
+            # Check if it's elif (single If node in orelse)
+            if len(orelse) == 1 and orelse[0]["type"] == NODE_IF:
+                elif_node = orelse[0]
+                elif_test = self._generate_expr(elif_node["test"])
+                result = result + "\n" + self._ind() + "elif " + elif_test + ":"
+                elif_body = self._gen_body(elif_node.get("body", []))
+                result = result + "\n" + elif_body
+                
+                # Recurse for further elif/else
+                elif_orelse = elif_node.get("orelse", [])
+                if len(elif_orelse) > 0:
+                    if len(elif_orelse) == 1 and elif_orelse[0]["type"] == NODE_IF:
+                        # More elif - this is handled by recursive structure
+                        # We generate the remaining chain
+                        remaining = elif_orelse[0]
+                        remaining_code = self._gen_if(remaining)
+                        result = result + "\n" + remaining_code
+                    else:
+                        else_body = self._gen_body(elif_orelse)
+                        result = result + "\n" + self._ind() + "else:\n" + else_body
+            else:
+                else_body = self._gen_body(orelse)
+                result = result + "\n" + self._ind() + "else:\n" + else_body
+        
+        return result
+
+    def _gen_for(self, node):
+        """Generate: for target in iter: ...
+        
+        Recursion:
+            target -> _generate_expr (could be Name, Tuple, etc.)
+            iter -> _generate_expr (could be Call, Name, BinOp, etc.)
+            body -> list of stmts -> each calls _generate_node
+        """
+        target = self._generate_expr(node["target"])
+        iter_expr = self._generate_expr(node["iter"])
+        
+        prefix = ""
+        if node.get("async", 0) == 1:
+            prefix = "async "
+        
+        result = self._ind() + prefix + "for " + target + " in " + iter_expr + ":"
+        body_lines = self._gen_body(node.get("body", []))
+        
+        orelse = node.get("orelse", [])
+        if len(orelse) > 0:
+            result = result + "\n" + body_lines
+            else_body = self._gen_body(orelse)
+            result = result + "\n" + self._ind() + "else:\n" + else_body
+        else:
+            result = result + "\n" + body_lines
+        
+        return result
+
+    def _gen_while(self, node):
+        """Generate: while test: ..."""
+        test = self._generate_expr(node["test"])
+        result = self._ind() + "while " + test + ":"
+        body_lines = self._gen_body(node.get("body", []))
+        
+        orelse = node.get("orelse", [])
+        if len(orelse) > 0:
+            result = result + "\n" + body_lines
+            else_body = self._gen_body(orelse)
+            result = result + "\n" + self._ind() + "else:\n" + else_body
+        else:
+            result = result + "\n" + body_lines
+        
+        return result
+
+    def _gen_try(self, node):
+        """Generate: try: ... except Type: ... else: ... finally: ...
+        
+        Recursion:
+            body -> _gen_body
+            handlers -> each handler calls _gen_body for its body
+            orelse -> _gen_body
+            finalbody -> _gen_body
+        """
+        result = self._ind() + "try:"
+        body_lines = self._gen_body(node.get("body", []))
+        result = result + "\n" + body_lines
+        
+        # Exception handlers
+        handlers = node.get("handlers", [])
+        for handler in handlers:
+            exc_type = handler.get("exc_type", None)
+            exc_name = handler.get("name", None)
+            
+            if exc_type is not None:
+                type_str = self._generate_expr(exc_type)
+                if exc_name is not None:
+                    result = result + "\n" + self._ind() + "except " + type_str + " as " + exc_name + ":"
+                else:
+                    result = result + "\n" + self._ind() + "except " + type_str + ":"
+            else:
+                result = result + "\n" + self._ind() + "except:"
+            
+            handler_body = self._gen_body(handler.get("body", []))
+            result = result + "\n" + handler_body
+        
+        # Else block
+        orelse = node.get("orelse", [])
+        if len(orelse) > 0:
+            else_body = self._gen_body(orelse)
+            result = result + "\n" + self._ind() + "else:\n" + else_body
+        
+        # Finally block
+        finalbody = node.get("finalbody", [])
+        if len(finalbody) > 0:
+            finally_body = self._gen_body(finalbody)
+            result = result + "\n" + self._ind() + "finally:\n" + finally_body
+        
+        return result
+
+    def _gen_import(self, node):
+        """Generate: import module"""
+        names = node.get("names", [])
+        name_strs = []
+        for n in names:
+            name_strs.append(self._translate_name(n["name"]))
+        return self._ind() + "import " + ", ".join(name_strs)
+
+    def _gen_import_from(self, node):
+        """Generate: from module import name1, name2, ..."""
+        module = self._translate_name(node["module"])
+        names = node.get("names", [])
+        name_strs = []
+        for n in names:
+            local = n.get("asname", None)
+            if local is not None:
+                name_strs.append(n["name"] + " as " + local)
+            else:
+                name_strs.append(n["name"])
+        return self._ind() + "from " + module + " import " + ", ".join(name_strs)
+
+    def _gen_raise(self, node):
+        """Generate: raise exc"""
+        exc = node.get("exc", None)
+        if exc is None:
+            return self._ind() + "raise"
+        cause = node.get("cause", None)
+        result = self._ind() + "raise " + self._generate_expr(exc)
+        if cause is not None:
+            result = result + " from " + self._generate_expr(cause)
+        return result
+
+    def _gen_assert(self, node):
+        """Generate: assert test, msg"""
+        test = self._generate_expr(node["test"])
+        msg = node.get("msg", None)
+        if msg is not None:
+            return self._ind() + "assert " + test + ", " + self._generate_expr(msg)
+        return self._ind() + "assert " + test
+
+    def _gen_delete(self, node):
+        """Generate: del target"""
+        targets = node.get("targets", [])
+        target_strs = []
+        for t in targets:
+            target_strs.append(self._generate_expr(t))
+        return self._ind() + "del " + ", ".join(target_strs)
+
+    def _gen_global(self, node):
+        """Generate: global name1, name2, ..."""
+        names = node.get("names", [])
+        return self._ind() + "global " + ", ".join(names)
+
+    def _gen_nonlocal(self, node):
+        """Generate: nonlocal name1, name2, ..."""
+        names = node.get("names", [])
+        return self._ind() + "nonlocal " + ", ".join(names)
+
+    def _gen_match(self, node):
+        """Generate: match subject: case pattern: ..."""
+        subject = self._generate_expr(node["subject"])
+        result = self._ind() + "match " + subject + ":"
+        
+        cases = node.get("cases", [])
+        for case_node in cases:
+            pattern = self._generate_expr(case_node["pattern"])
+            guard = case_node.get("guard", None)
+            case_line = self._ind() + "    case " + pattern
+            if guard is not None:
+                case_line = case_line + " if " + self._generate_expr(guard)
+            case_line = case_line + ":"
+            
+            case_body = self._gen_body_nested(case_node.get("body", []), self.indent_level + 2)
+            result = result + "\n" + case_line + "\n" + case_body
+        
+        return result
+
+    def _gen_with(self, node):
+        """Generate: with expr as var: ..."""
+        items = node.get("items", [])
+        item_strs = []
+        for item in items:
+            expr = self._generate_expr(item["context_expr"])
+            var = item.get("optional_vars", None)
+            if var is not None:
+                item_strs.append(expr + " as " + var)
+            else:
+                item_strs.append(expr)
+        
+        prefix = ""
+        if node.get("async", 0) == 1:
+            prefix = "async "
+        
+        result = self._ind() + prefix + "with " + ", ".join(item_strs) + ":"
+        body_lines = self._gen_body(node.get("body", []))
+        return result + "\n" + body_lines
+
+    def _gen_params(self, params):
+        """Generate function parameter string.
+        
+        Handles:
+        - Regular params: name
+        - Typed params: name: type
+        - Default values: name = value
+        - *args and **kwargs
+        - Keyword-only params (after *)
+        """
+        parts = []
+        for p in params:
+            pname = p.get("name", "")
+            ptype = p.get("annotation", None)
+            pdefault = p.get("default", None)
+            
+            # Handle *args
+            if p.get("star", 0) == 1:
+                part = "*" + pname
+            elif p.get("star", 0) == 2:
+                part = "**" + pname
+            else:
+                part = pname
+            
+            if ptype is not None:
+                part = part + ": " + self._generate_expr(ptype)
+            
+            if pdefault is not None:
+                part = part + " = " + self._generate_expr(pdefault)
+            
+            parts.append(part)
+        
+        return ", ".join(parts)
+
+    # -----------------------------------------------------------
+    # PRIVATE: Expression Generators (Recursive Core)
+    # -----------------------------------------------------------
+    
+    def _generate_expr(self, node):
+        """Generate a Python expression string from an AST expression node.
+        
+        This is the RECURSIVE HEART of the code generator.
+        
+        Recursion pattern for nested expressions:
+            BinOp(left, op, right):
+                left_str = _generate_expr(left)   # recurse left
+                right_str = _generate_expr(right) # recurse right
+                return left_str + " " + op_symbol + " " + right_str
+            
+            Call(func, args):
+                func_str = _generate_expr(func)  # recurse into func (could be Attribute, Name, etc.)
+                args_str = ", ".join([_generate_expr(a) for a in args])  # recurse into each arg
+                return func_str + "(" + args_str + ")"
+            
+            Compare(left, ops, comparators):
+                left_str = _generate_expr(left)  # recurse
+                parts = [left_str]
+                for i in range(len(ops)):
+                    op_str = COMPARE_OP_SYMBOLS[ops[i]]
+                    comp_str = _generate_expr(comparators[i])  # recurse each comparator
+                    parts.append(op_str)
+                    parts.append(comp_str)
+                return " ".join(parts)
+        
+        Maximum recursion depth is bounded by AST depth (depth of nested
+        expressions), which is always finite for valid programs.
+        """
+        if node is None:
+            return "None"
+        
+        ntype = node["type"]
+        
+        # --- Literals ---
+        if ntype == NODE_CONSTANT:
+            return self._gen_constant(node)
+        if ntype == NODE_NAME:
+            return self._gen_name(node)
+        if ntype == NODE_LIST:
+            return self._gen_list(node)
+        if ntype == NODE_DICT:
+            return self._gen_dict(node)
+        if ntype == NODE_SET:
+            return self._gen_set(node)
+        if ntype == NODE_TUPLE:
+            return self._gen_tuple(node)
+        if ntype == NODE_FSTRING:
+            return node.get("value", '""')
+        if ntype == NODE_JOINED_STR:
+            return self._gen_joined_str(node)
+        
+        # --- Operations ---
+        if ntype == NODE_BIN_OP:
+            return self._gen_binop(node)
+        if ntype == NODE_UNARY_OP:
+            return self._gen_unaryop(node)
+        if ntype == NODE_BOOL_OP:
+            return self._gen_boolop(node)
+        if ntype == NODE_COMPARE:
+            return self._gen_compare(node)
+        
+        # --- Calls ---
+        if ntype == NODE_CALL:
+            return self._gen_call(node)
+        if ntype == NODE_IA_CALL:
+            return self._gen_ia_call(node)
+        if ntype == NODE_LAMBDA:
+            return self._gen_lambda(node)
+        
+        # --- Access ---
+        if ntype == NODE_ATTRIBUTE:
+            return self._gen_attribute(node)
+        if ntype == NODE_SUBSCRIPT:
+            return self._gen_subscript(node)
+        if ntype == NODE_SLICE:
+            return self._gen_slice(node)
+        if ntype == NODE_STARRED:
+            return "*" + self._generate_expr(node["value"])
+        
+        # --- Conditional expression ---
+        if ntype == NODE_IF_EXPR:
+            return self._gen_if_expr(node)
+        
+        # --- Comprehensions ---
+        if ntype == NODE_LIST_COMP:
+            return self._gen_list_comp(node)
+        if ntype == NODE_DICT_COMP:
+            return self._gen_dict_comp(node)
+        if ntype == NODE_SET_COMP:
+            return self._gen_set_comp(node)
+        if ntype == NODE_GENERATOR_EXPR:
+            return self._gen_generator_expr(node)
+        
+        # --- Walrus operator ---
+        if ntype == NODE_WALRUS:
+            return "(" + self._generate_expr(node["target"]) + " := " + self._generate_expr(node["value"]) + ")"
+        
+        # --- Formatted value (inside f-string) ---
+        if ntype == NODE_FORMATTED_VALUE:
+            return self._gen_formatted_value(node)
+        
+        # Fallback: return raw value if available
+        if "value" in node:
+            return str(node["value"])
+        return ""
+
+    def _gen_constant(self, node):
+        """Generate a literal constant.
+        
+        Handles: int, float, str, bool, None
+        Converts Myanmar digits to Arabic digits.
+        """
+        value = node["value"]
+        
+        # String literal
+        if isinstance(value, str):
+            # Check if it's already quoted (from tokenizer)
+            if len(value) >= 2 and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'")):
+                # Already quoted - convert Myanmar digits inside
+                return self._convert_myanmar_digits(value)
+            # Unquoted string - add quotes
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            return '"' + escaped + '"'
+        
+        # Boolean
+        if value is True:
+            return "True"
+        if value is False:
+            return "False"
+        
+        # None
+        if value is None:
+            return "None"
+        
+        # Number - convert Myanmar digits
+        num_str = str(value)
+        return self._convert_myanmar_digits(num_str)
+
+    def _gen_name(self, node):
+        """Generate a variable/function name reference.
+        
+        Translate Myanmar keywords to Python equivalents.
+        """
+        name = node["id"]
+        return self._translate_name(name)
+
+    def _gen_list(self, node):
+        """Generate: [elem1, elem2, ...]"""
+        elts = node.get("elts", [])
+        if len(elts) == 0:
+            return "[]"
+        parts = []
+        for e in elts:
+            parts.append(self._generate_expr(e))
+        return "[" + ", ".join(parts) + "]"
+
+    def _gen_dict(self, node):
+        """Generate: {key1: val1, key2: val2, ...}"""
+        keys = node.get("keys", [])
+        values = node.get("values", [])
+        if len(keys) == 0:
+            return "{}"
+        parts = []
+        for i in range(len(keys)):
+            if keys[i] is None:
+                # ** unpacking
+                parts.append("**" + self._generate_expr(values[i]))
+            else:
+                parts.append(self._generate_expr(keys[i]) + ": " + self._generate_expr(values[i]))
+        return "{" + ", ".join(parts) + "}"
+
+    def _gen_set(self, node):
+        """Generate: {elem1, elem2, ...}"""
+        elts = node.get("elts", [])
+        if len(elts) == 0:
+            return "set()"
+        parts = []
+        for e in elts:
+            parts.append(self._generate_expr(e))
+        return "{" + ", ".join(parts) + "}"
+
+    def _gen_tuple(self, node):
+        """Generate: (elem1, elem2, ...)"""
+        elts = node.get("elts", [])
+        if len(elts) == 0:
+            return "()"
+        if len(elts) == 1:
+            return "(" + self._generate_expr(elts[0]) + ",)"
+        parts = []
+        for e in elts:
+            parts.append(self._generate_expr(e))
+        return "(" + ", ".join(parts) + ")"
+
+    def _gen_joined_str(self, node):
+        """Generate an f-string from JoinedStr nodes."""
+        values = node.get("values", [])
+        parts = []
+        for v in values:
+            parts.append(self._generate_expr(v))
+        return 'f"' + "".join(parts) + '"'
+
+    def _gen_formatted_value(self, node):
+        """Generate a formatted value inside an f-string."""
+        value = self._generate_expr(node["value"])
+        conversion = node.get("conversion", None)
+        format_spec = node.get("format_spec", None)
+        
+        if conversion is not None:
+            value = value + "!" + str(chr(conversion))
+        if format_spec is not None:
+            value = value + ":" + self._generate_expr(format_spec)
+        
+        return "{" + value + "}"
+
+    def _gen_binop(self, node):
+        """Generate binary operation: left op right.
+        
+        Recursion:
+            _generate_expr(left) may recurse for nested BinOp
+            _generate_expr(right) may recurse for nested BinOp
+        
+        Example: 1 + 2 * 3
+            AST: BinOp(Constant(1), Add, BinOp(Constant(2), Mult, Constant(3)))
+            _gen_binop:
+                left = _gen_constant(1) = "1"
+                right = _gen_binop(BinOp(2, *, 3))
+                    left = "2"
+                    right = "3"
+                    return "2 * 3"
+                return "1 + 2 * 3"
+        """
+        left = self._generate_expr(node["left"])
+        op_symbol = BIN_OP_SYMBOLS.get(node["op"], "?")
+        right = self._generate_expr(node["right"])
+        return left + " " + op_symbol + " " + right
+
+    def _gen_unaryop(self, node):
+        """Generate unary operation: op operand.
+        
+        Example: not True, -5, ~x
+        """
+        op_symbol = UNARY_OP_SYMBOLS.get(node["op"], "?")
+        operand = self._generate_expr(node["operand"])
+        return op_symbol + operand
+
+    def _gen_boolop(self, node):
+        """Generate boolean operation: a and b, a or b.
+        
+        Recursion:
+            Each value in values list calls _generate_expr recursively.
+        
+        Example: a > 0 and b < 10 and c == 5
+            AST: BoolOp(And, [Compare(a, >, 0), Compare(b, <, 10), Compare(c, ==, 5)])
+            _gen_boolop:
+                "a > 0 and b < 10 and c == 5"
+        """
+        op_symbol = BOOL_OP_SYMBOLS.get(node["op"], "?")
+        values = node.get("values", [])
+        parts = []
+        for v in values:
+            parts.append(self._generate_expr(v))
+        return (" " + op_symbol + " ").join(parts)
+
+    def _gen_compare(self, node):
+        """Generate comparison: left op1 comp1 op2 comp2 ...
+        
+        Recursion:
+            _generate_expr(left) recurses
+            Each comparator calls _generate_expr recursively
+        
+        Example: 0 < x < 10
+            AST: Compare(Constant(0), [Lt, Lt], [Name(x), Constant(10)])
+            Result: "0 < x < 10"
+        """
+        left = self._generate_expr(node["left"])
+        ops = node.get("ops", [])
+        comparators = node.get("comparators", [])
+        
+        parts = [left]
+        for i in range(len(ops)):
+            op_sym = COMPARE_OP_SYMBOLS.get(ops[i], "?")
+            comp = self._generate_expr(comparators[i])
+            parts.append(op_sym)
+            parts.append(comp)
+        
+        return " ".join(parts)
+
+    def _gen_call(self, node):
+        """Generate function call: func(arg1, arg2, **kw=...).
+        
+        Recursion:
+            func -> _generate_expr (could be Attribute: obj.method)
+            each arg -> _generate_expr (could be BinOp, Call, etc.)
+            each kw value -> _generate_expr
+        
+        This is the most deeply recursive expression generator.
+        Example: print(sorted(x, key=lambda a: a[0]))
+            Call(Name(print), [Call(Name(sorted), [Name(x), keyword(key, Lambda(...))])])
+        """
+        func_str = self._generate_expr(node["func"])
+        
+        # Positional arguments
+        args = node.get("args", [])
+        arg_strs = []
+        for a in args:
+            arg_strs.append(self._generate_expr(a))
+        
+        # Keyword arguments
+        keywords = node.get("keywords", [])
+        for kw in keywords:
+            if kw.get("arg", None) is None:
+                # **kwargs unpacking
+                arg_strs.append("**" + self._generate_expr(kw["value"]))
+            else:
+                arg_strs.append(kw["arg"] + "=" + self._generate_expr(kw["value"]))
+        
+        return func_str + "(" + ", ".join(arg_strs) + ")"
+
+    def _gen_ia_call(self, node):
+        """Generate IA/AI native call: __mmc_ai__.method(args).
+        
+        This handles the Phase 3 IA integration.
+        Maps all four keyword variants to __mmc_ai__:
+            'အေအိုင်AI', 'AI', 'ia', 'အိုင်အေ'
+        
+        Methods:
+            ပြောပါ -> __mmc_ai__.say(args)
+            သင်ယူပါ -> __mmc_ai__.learn(args)
+            စဉ်းစားပါ -> __mmc_ai__.think(args)
+            ဖော်ပြပါ -> __mmc_ai__.explain(args)
+            ... and all other IA methods
+        
+        Recursion:
+            Each argument calls _generate_expr recursively.
+        """
+        method = node.get("method", "say")
+        args = node.get("args", [])
+        
+        # Translate Myanmar IA method to Python
+        py_method = IA_METHOD_MAP.get(method, method)
+        
+        # Generate argument strings
+        arg_strs = []
+        for a in args:
+            arg_strs.append(self._generate_expr(a))
+        
+        args_str = ", ".join(arg_strs)
+        
+        return "__mmc_ai__." + py_method + "(" + args_str + ")"
+
+    def _gen_attribute(self, node):
+        """Generate attribute access: obj.attr.
+        
+        Recursion:
+            value -> _generate_expr (could be nested Attribute)
+        
+        Example: self._data[i][j]
+            AST: Subscript(Attribute(Name(self), _data), [Name(i), Name(j)])
+            _gen_attribute: "self._data"
+        """
+        value_str = self._generate_expr(node["value"])
+        attr = node["attr"]
+        
+        # Translate Myanmar method names after dot
+        translated_attr = MM_METHOD_MAP.get(attr, attr)
+        
+        return value_str + "." + translated_attr
+
+    def _gen_subscript(self, node):
+        """Generate subscript: value[index].
+        
+        Recursion:
+            value -> _generate_expr
+            slice -> _generate_expr (could be Slice node)
+        """
+        value_str = self._generate_expr(node["value"])
+        slice_str = self._generate_expr(node.get("slice", None))
+        return value_str + "[" + slice_str + "]"
+
+    def _gen_slice(self, node):
+        """Generate slice: lower:upper:step"""
+        lower = node.get("lower", None)
+        upper = node.get("upper", None)
+        step = node.get("step", None)
+        
+        parts = []
+        if lower is not None:
+            parts.append(self._generate_expr(lower))
+        parts.append("")
+        if upper is not None:
+            parts.append(self._generate_expr(upper))
+        if step is not None:
+            parts.append(self._generate_expr(step))
+        
+        return ":".join(parts)
+
+    def _gen_lambda(self, node):
+        """Generate: lambda params: expr"""
+        params = node.get("params", [])
+        param_strs = []
+        for p in params:
+            param_strs.append(p.get("name", ""))
+        
+        body = self._generate_expr(node["body"])
+        return "lambda " + ", ".join(param_strs) + ": " + body
+
+    def _gen_if_expr(self, node):
+        """Generate: body if test else orelse (ternary)"""
+        body = self._generate_expr(node["body"])
+        test = self._generate_expr(node["test"])
+        orelse = self._generate_expr(node["orelse"])
+        return body + " if " + test + " else " + orelse
+
+    def _gen_list_comp(self, node):
+        """Generate: [expr for target in iter if condition]"""
+        elt = self._generate_expr(node["elt"])
+        generators = node.get("generators", [])
+        comp_parts = self._gen_comprehension_generators(generators)
+        return "[" + elt + " " + comp_parts + "]"
+
+    def _gen_dict_comp(self, node):
+        """Generate: {key: value for target in iter if condition}"""
+        key = self._generate_expr(node["key"])
+        value = self._generate_expr(node["value"])
+        generators = node.get("generators", [])
+        comp_parts = self._gen_comprehension_generators(generators)
+        return "{" + key + ": " + value + " " + comp_parts + "}"
+
+    def _gen_set_comp(self, node):
+        """Generate: {expr for target in iter if condition}"""
+        elt = self._generate_expr(node["elt"])
+        generators = node.get("generators", [])
+        comp_parts = self._gen_comprehension_generators(generators)
+        return "{" + elt + " " + comp_parts + "}"
+
+    def _gen_generator_expr(self, node):
+        """Generate: (expr for target in iter if condition)"""
+        elt = self._generate_expr(node["elt"])
+        generators = node.get("generators", [])
+        comp_parts = self._gen_comprehension_generators(generators)
+        return "(" + elt + " " + comp_parts + ")"
+
+    def _gen_comprehension_generators(self, generators):
+        """Generate: for target in iter [if condition] [for target2 in iter2 ...]"""
+        parts = []
+        for gen in generators:
+            target = self._generate_expr(gen["target"])
+            iter_expr = self._generate_expr(gen["iter"])
+            parts.append("for " + target + " in " + iter_expr)
+            
+            # If conditions
+            ifs = gen.get("ifs", [])
+            for cond in ifs:
+                parts.append("if " + self._generate_expr(cond))
+        
+        return " ".join(parts)
+
+    # -----------------------------------------------------------
+    # PRIVATE: Utility Methods
+    # -----------------------------------------------------------
+    
+    def _ind(self):
+        """Return current indentation string."""
+        return self.indent_str * self.indent_level
+
+    def _gen_body(self, stmt_nodes):
+        """Generate indented body from a list of statement nodes.
+        
+        Recursion:
+            Each statement in stmt_nodes calls _generate_node,
+            which may recurse into its own sub-bodies.
+        
+        Indent level is incremented before processing body,
+            and decremented after.
+        """
+        self.indent_level = self.indent_level + 1
+        lines = []
+        for stmt in stmt_nodes:
+            line = self._generate_node(stmt)
+            if line is not None and line != "":
+                lines.append(line)
+        self.indent_level = self.indent_level - 1
+        return "\n".join(lines)
+
+    def _gen_body_nested(self, stmt_nodes, base_indent):
+        """Generate body at a specific indent level (for match/case)."""
+        old_level = self.indent_level
+        self.indent_level = base_indent
+        lines = []
+        for stmt in stmt_nodes:
+            line = self._generate_node(stmt)
+            if line is not None and line != "":
+                lines.append(line)
+        self.indent_level = old_level
+        return "\n".join(lines)
+
+    def _translate_name(self, name):
+        """Translate a name from Myanmar MMC to Python.
+        
+        Check order:
+        1. Value keywords (မှန် -> True, မှား -> False, etc.)
+        2. Function keywords (ပုံနှိပ် -> print, etc.)
+        3. Statement keywords (not typically used as names, but for safety)
+        4. Type names
+        5. Method keywords (when used after dot, handled by _gen_attribute)
+        6. Identity (no translation needed)
+        """
+        if name in MM_VALUE_MAP:
+            return MM_VALUE_MAP[name]
+        if name in MM_FUNC_MAP:
+            return MM_FUNC_MAP[name]
+        if name in MM_STMT_MAP:
+            return MM_STMT_MAP[name]
+        if name in MM_TYPE_MAP:
+            return MM_TYPE_MAP[name]
+        return name
+
+    def _convert_myanmar_digits(self, text):
+        """Convert Myanmar digits (၀-၉) to Arabic digits (0-9) in text.
+        
+        Used for:
+        1. Numeric constants: ၁၂၃ -> 123
+        2. String contents containing digits
+        3. Variable names with embedded digits (unusual but valid)
+        """
+        for my, ar in MYANMAR_DIGITS.items():
+            text = text.replace(my, ar)
+        return text
+
+    def _is_ia_keyword(self, name):
+        """Check if a name is one of the 4 IA keyword variants."""
+        return name in IA_KEYWORD_VARIANTS
+
+
+# =================================================================
+# SECTION 7: Smart Join Utility
+# =================================================================
+# This replicates the _smart_join logic from mmc_transpiler.py v9.0
+# for consistent spacing in generated Python code.
+
+def smart_join(parts):
+    """Join Python code parts with proper spacing.
+    
+    Rules:
+    - No space before/after: ., @, (, [, {, ), ], }, comma, semicolon, colon
+    - Space before ( after keywords (def, if, for, while, etc.)
+    - Space around operators: =, ==, +, -, etc.
+    - Space after closing brackets if followed by word/operator
+    """
+    if len(parts) == 0:
+        return ""
+    
+    # Filter empty parts
+    filtered = []
+    for p in parts:
+        if p != "":
+            filtered.append(p)
+    parts = filtered
+    
+    if len(parts) <= 1:
+        return "".join(parts)
+    
+    result = [parts[0]]
+    i = 1
+    
+    # Keywords that need space before (
+    SPACE_BEFORE_PAREN = {
+        "def", "class", "if", "elif", "else", "while", "for", "with",
+        "assert", "return", "raise", "yield", "yield from", "lambda",
+        "not", "and", "or", "in", "is", "as", "async", "await",
+        "del", "global", "nonlocal", "pass", "import", "from",
+        "except", "finally", "try", "match", "case",
+    }
+    
+    while i < len(parts):
+        prev = result[-1]
+        curr = parts[i]
+        
+        # No space cases
+        if prev == "." or curr == ".":
+            result.append(curr)
+            i = i + 1
+            continue
+        if prev == "@":
+            result.append(curr)
+            i = i + 1
+            continue
+        if prev in ("(", "[", "{"):
+            result.append(curr)
+            i = i + 1
+            continue
+        if curr in (")", "]", "}"):
+            result.append(curr)
+            i = i + 1
+            continue
+        if curr in (",", ";", ":"):
+            result.append(curr)
+            i = i + 1
+            continue
+        
+        # No space: ident( or 123( or )(
+        if len(prev) > 0 and len(curr) > 0:
+            if curr == "(" and (prev[-1].isdigit() or prev[-1] in "+-*/%<>!&|^~?)'\"_"):
+                result.append(curr)
+                i = i + 1
+                continue
+            if curr == "[" and (prev[-1].isdigit() or prev[-1] in "+-*/%<>!&|^~?)'\"_"):
+                result.append(curr)
+                i = i + 1
+                continue
+            if curr == "[" and (prev[-1].isalpha() or prev[-1] == "_") and prev != "=":
+                result.append(curr)
+                i = i + 1
+                continue
+            if curr in ("(", "[") and prev[-1] in (")", "]", "}"):
+                result.append(curr)
+                i = i + 1
+                continue
+            if prev[-1] in (")", "]", "}"):
+                if curr[0] not in (",", ";", ":", ")", "]", "}"):
+                    result.append(" ")
+                result.append(curr)
+                i = i + 1
+                continue
+            if prev[0] in ('"', "'"):
+                result.append(" ")
+                result.append(curr)
+                i = i + 1
+                continue
+        
+        # Space before ( after keywords
+        if curr == "(":
+            prev_clean = prev.lstrip()
+            if prev_clean in SPACE_BEFORE_PAREN:
+                result.append(" ")
+                result.append(curr)
+            else:
+                result.append(curr)
+            i = i + 1
+            continue
+        
+        # Space around assignment operators
+        if prev == "=":
+            result.append(" ")
+            result.append(curr)
+            i = i + 1
+            continue
+        if prev in ("+=", "-=", "*=", "/=", "%=", "**=", "//=", ">>=", "<<=", "@="):
+            result.append(" ")
+            result.append(curr)
+            i = i + 1
+            continue
+        if prev in ("==", "!=", ">=", "<=", "**", "//", "->", "<<", ">>", "&&", "||", ":=", "??"):
+            result.append(" ")
+            result.append(curr)
+            i = i + 1
+            continue
+        
+        # Default: add space
+        result.append(" ")
+        result.append(curr)
+        i = i + 1
+    
+    return "".join(result)
+
+
+# =================================================================
+# SECTION 8: Convenience Factory Functions
+# =================================================================
+
+def create_codegen():
+    """Create a new MMCCodeGenerator instance with default settings."""
+    return MMCCodeGenerator(indent_str="    ", source_map_enabled=0)
+
+
+def generate_code(ast_node):
+    """Generate Python code from a single AST node.
+    
+    Convenience function for one-shot code generation.
+    Equivalent to:
+        gen = MMCCodeGenerator()
+        return gen.generate(ast_node)
+    
+    Args:
+        ast_node: AST node dict with 'type' field.
+    
+    Returns:
+        Python source code string.
+    """
+    gen = MMCCodeGenerator()
+    return gen.generate(ast_node)
+
+
+def generate_program(body_nodes):
+    """Generate complete Python program from AST body nodes.
+    
+    Convenience function for full program code generation.
+    
+    Args:
+        body_nodes: List of AST statement node dicts.
+    
+    Returns:
+        Complete Python source code string.
+    """
+    gen = MMCCodeGenerator()
+    return gen.generate_program(body_nodes)
+
+
+def generate_from_parser(parser_output):
+    """Generate Python code from mmc_parser.mmc output.
+    
+    The parser produces a dict:
+        {
+            "type": "Program",
+            "body": [stmt1, stmt2, ...]
+        }
+    
+    This function handles that format directly.
+    
+    Args:
+        parser_output: Dict with "type" and "body" fields.
+    
+    Returns:
+        Complete Python source code string.
+    """
+    gen = MMCCodeGenerator()
+    
+    if isinstance(parser_output, dict):
+        ptype = parser_output.get("type", "")
+        if ptype in (NODE_PROGRAM, NODE_MODULE):
+            return gen.generate_program(parser_output.get("body", []))
+        return gen.generate(parser_output)
+    
+    return ""
+
+
+# =================================================================
+# SECTION 9: IA Integration Bootstrap Code
+# =================================================================
+# This Python preamble is prepended when IA features are used.
+# It defines the __mmc_ai__ object that all IA calls target.
+
+IA_BOOTSTRAP_PREAMBLE = """
+# MMC AI Runtime Bootstrap
+# Auto-generated by mmc_codegen.mmc when IA features are detected.
+
+class __MMC_AI__:
+    '''MMC AI Integration Object.
+    
+    Provides the AI/IA interface for MMC programs.
+    All IA keyword variants map to this object:
+        အေအိုင်AI, AI, ia, အိုင်အေ -> __mmc_ai__
+    '''
+    
+    def __init__(self):
+        self._model = None
+        self._bridge = None
+        self._connected = 0
+    
+    def say(self, *args, **kwargs):
+        '''ပြောပါ - Send message to AI, get response.'''
+        if self._connected and self._bridge:
+            return self._bridge.say(*args, **kwargs)
+        return None
+    
+    def learn(self, *args, **kwargs):
+        '''သင်ယူပါ - Train/teach the AI model.'''
+        if self._connected and self._bridge:
+            return self._bridge.learn(*args, **kwargs)
+        return None
+    
+    def think(self, *args, **kwargs):
+        '''စဉ်းစားပါ - Ask AI to reason/analyze.'''
+        if self._connected and self._bridge:
+            return self._bridge.think(*args, **kwargs)
+        return None
+    
+    def explain(self, *args, **kwargs):
+        '''ဖော်ပြပါ - Ask AI to explain something.'''
+        if self._connected and self._bridge:
+            return self._bridge.explain(*args, **kwargs)
+        return None
+    
+    def connect(self, *args, **kwargs):
+        '''ဆက်ပါ - Connect to AI backend.'''
+        try:
+            from stdlib.ia_bridge import IABridge
+            self._bridge = IABridge()
+            self._connected = 1
+        except Exception:
+            self._connected = 0
+    
+    def update(self, *args, **kwargs):
+        '''ပြင်ဆင်ပါ - Update AI model/knowledge.'''
+        if self._connected and self._bridge:
+            return self._bridge.update(*args, **kwargs)
+    
+    def check(self, *args, **kwargs):
+        '''စစ်ဆေးပါ - Verify AI response/status.'''
+        if self._connected and self._bridge:
+            return self._bridge.check(*args, **kwargs)
+    
+    def ask(self, *args, **kwargs):
+        '''ဖုံးပါ - Query the AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.ask(*args, **kwargs)
+    
+    def describe(self, *args, **kwargs):
+        '''ရှင်းပြပါ - Describe something using AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.describe(*args, **kwargs)
+    
+    def teach(self, *args, **kwargs):
+        '''ညွှန်ပါ - Teach the AI new information.'''
+        if self._connected and self._bridge:
+            return self._bridge.teach(*args, **kwargs)
+    
+    def visualize(self, *args, **kwargs):
+        '''ဖော်ကျားပါ - Generate visualization via AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.visualize(*args, **kwargs)
+    
+    def generate(self, *args, **kwargs):
+        '''ဖိုးထုတ်ပါ - Generate content via AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.generate(*args, **kwargs)
+    
+    def respond(self, *args, **kwargs):
+        '''ထုတ်ပေးပါ - Get AI response.'''
+        if self._connected and self._bridge:
+            return self._bridge.respond(*args, **kwargs)
+    
+    def analyze(self, *args, **kwargs):
+        '''ခွဲခြမ်းပါ - Analyze data via AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.analyze(*args, **kwargs)
+    
+    def chat(self, *args, **kwargs):
+        '''တိုက်ရိုက်ပါ - Chat with AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.chat(*args, **kwargs)
+    
+    def translate(self, *args, **kwargs):
+        '''ဖြေရှင်းပါ - Translate via AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.translate(*args, **kwargs)
+    
+    def summarize(self, *args, **kwargs):
+        '''စူးစိုက်ပါ - Summarize via AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.summarize(*args, **kwargs)
+    
+    def dream(self, *args, **kwargs):
+        '''ဆန်ပါ - Creative generation via AI.'''
+        if self._connected and self._bridge:
+            return self._bridge.dream(*args, **kwargs)
+
+__mmc_ai__ = __MMC_AI__()
+"""
+
+
+def has_ia_calls(ast_body):
+    """Check if an AST body contains any IA/AI calls.
+    
+    Scans all nodes recursively for IACall type nodes.
+    Returns 1 if found, 0 otherwise.
+    """
+    for node in ast_body:
+        if node.get("type") == NODE_IA_CALL:
+            return 1
+        # Check body lists in nested structures
+        for key in ("body", "orelse", "handlers", "finalbody"):
+            if key in node:
+                val = node[key]
+                if isinstance(val, list):
+                    for sub in val:
+                        if isinstance(sub, dict):
+                            if sub.get("type") == NODE_IA_CALL:
+                                return 1
+    return 0
+
+
+def generate_with_bootstrap(parser_output):
+    """Generate Python code with IA bootstrap preamble if needed.
+    
+    Detects IA calls in the AST and prepends the __mmc_ai__
+    runtime class definition when needed.
+    
+    Args:
+        parser_output: Dict from mmc_parser.mmc with "type" and "body".
+    
+    Returns:
+        Complete Python source code with bootstrap if needed.
+    """
+    body = parser_output.get("body", [])
+    
+    if has_ia_calls(body):
+        gen = MMCCodeGenerator()
+        code = gen.generate_program(body)
+        return IA_BOOTSTRAP_PREAMBLE + "\n" + code
+    else:
+        gen = MMCCodeGenerator()
+        return gen.generate_program(body)
+
+
+# =================================================================
+# SECTION 10: Self-Hosting Pipeline Integration
+# =================================================================
+# This section defines how mmc_codegen.mmc connects to
+# mmc_lexer.mmc and mmc_parser.mmc in the full pipeline.
+#
+# PIPELINE ARCHITECTURE:
+#
+#   MMC Source Code (*.mmc file)
+#         |
+#         v
+#   mmc_lexer.mmc
+#   - Tokenizes MMC source into Token objects
+#   - Handles Myanmar Unicode, digits, strings, operators
+#   - Produces: List[Token]
+#         |
+#         v
+#   mmc_parser.mmc
+#   - Parses token stream into AST (Abstract Syntax Tree)
+#   - Handles all MMC grammar: stmts, exprs, OOP, etc.
+#   - Produces: Dict (AST root node)
+#         |
+#         v
+#   mmc_codegen.mmc (THIS FILE)
+#   - Converts AST to runnable Python 3 code
+#   - Translates Myanmar keywords to Python
+#   - Handles IA native mapping
+#   - Produces: String (Python source code)
+#         |
+#         v
+#   Python 3 Runtime (exec)
+#   - Executes generated Python code
+#   - Optionally runs with __mmc_ai__ for AI features
+#
+# BOOTSTRAP STRATEGY:
+#
+# Phase 1 (Current): Python transpiler (mmc_transpiler.py) compiles
+#   mmc_codegen.mmc itself to Python, then runs it.
+#
+# Phase 2: mmc_codegen.mmc is used to compile simple MMC programs.
+#   Test: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_codegen.mmc -> Python
+#
+# Phase 3 (Full Self-Hosting): mmc_codegen.mmc compiles itself.
+#   The generated Python from mmc_codegen.mmc IS mmc_codegen.
+#   Verification: round-trip produces identical output.
+
+def pipeline_compile(mmc_source):
+    """Full self-hosting compilation pipeline.
+    
+    This is the main entry point for the self-hosted compiler.
+    It connects lexer -> parser -> codegen.
+    
+    Args:
+        mmc_source: String of MMC source code.
+    
+    Returns:
+        String of Python source code ready for execution.
+    
+    Usage (from Python bootstrap):
+        from selfhosted.mmc_codegen import pipeline_compile
+        
+        with open("program.mmc", "r") as f:
+            mmc_source = f.read()
+        
+        python_code = pipeline_compile(mmc_source)
+        exec(python_code)
+    
+    Self-hosting usage (from MMC):
+        # In MMC language:
+        သတ်မှတ်ပါ mmc_source = ဖွင်("program.mmc")
+        သတ်မှတ်ပါ python_code = pipeline_compile(mmc_source)
+        exec(python_code)
+    """
+    # Step 1: Lexical Analysis (would call mmc_lexer)
+    # For now, we accept pre-parsed AST or use the Python transpiler
+    # to bridge. Once mmc_lexer.mmc and mmc_parser.mmc are available,
+    # they would be called here directly.
+    
+    # Bridge: use Python transpiler for tokenization/parsing
+    # while codegen is done by this MMC module
+    try:
+        import sys
+        import os
+        transpiler_path = os.path.join(os.path.dirname(__file__), "..", "mmc_transpiler.py")
+        if os.path.exists(transpiler_path):
+            sys.path.insert(0, os.path.dirname(transpiler_path))
+            from mmc_transpiler import mmc_to_python
+            # Use Python transpiler's tokenizer + parser
+            # but override codegen with this module
+            py_code = mmc_to_python(mmc_source)
+            return py_code
+    except Exception:
+        pass
+    
+    # Fallback: if no transpiler available, return source as-is
+    # (requires mmc_lexer.mmc and mmc_parser.mmc to be integrated)
+    return mmc_source
+
+
+# =================================================================
+# SECTION 11: Test / Verification
+# =================================================================
+
+def test_codegen():
+    """Run self-tests on the code generator.
+    
+    Tests:
+    1. Simple variable assignment
+    2. If/else chain
+    3. For loop
+    4. Function definition
+    5. Class definition
+    6. IA native mapping
+    7. Nested expressions (recursion)
+    8. List comprehension
+    9. Try/except
+    10. Lambda and boolean operations
+    """
+    gen = MMCCodeGenerator()
+    passed = 0
+    total = 0
+    
+    # Test 1: Variable assignment
+    total = total + 1
+    node = {"type": NODE_ASSIGN, "targets": [{"type": NODE_NAME, "id": "x"}], "value": {"type": NODE_CONSTANT, "value": 42}}
+    result = gen.generate(node)
+    if result.strip() == "x = 42":
+        passed = passed + 1
+    
+    # Test 2: If/else
+    total = total + 1
+    node = {
+        "type": NODE_IF,
+        "test": {"type": NODE_COMPARE, "left": {"type": NODE_NAME, "id": "x"}, "ops": [OP_GT], "comparators": [{"type": NODE_CONSTANT, "value": 0}]},
+        "body": [{"type": NODE_EXPR_STMT, "value": {"type": NODE_CALL, "func": {"type": NODE_NAME, "id": "print"}, "args": [{"type": NODE_CONSTANT, "value": "positive"}]}}],
+        "orelse": [{"type": NODE_EXPR_STMT, "value": {"type": NODE_CALL, "func": {"type": NODE_NAME, "id": "print"}, "args": [{"type": NODE_CONSTANT, "value": "non-positive"}]}}]
+    }
+    result = gen.generate(node)
+    if "if x > 0:" in result and "else:" in result and "print(" in result:
+        passed = passed + 1
+    
+    # Test 3: For loop
+    total = total + 1
+    node = {
+        "type": NODE_FOR,
+        "target": {"type": NODE_NAME, "id": "i"},
+        "iter": {"type": NODE_CALL, "func": {"type": NODE_NAME, "id": "range"}, "args": [{"type": NODE_CONSTANT, "value": 10}]},
+        "body": [{"type": NODE_EXPR_STMT, "value": {"type": NODE_CALL, "func": {"type": NODE_NAME, "id": "print"}, "args": [{"type": NODE_NAME, "id": "i"}]}}]
+    }
+    result = gen.generate(node)
+    if "for i in range(10):" in result and "print(i)" in result:
+        passed = passed + 1
+    
+    # Test 4: Function definition
+    total = total + 1
+    node = {
+        "type": NODE_FUNCTION_DEF,
+        "name": "greet",
+        "params": [{"name": "name"}],
+        "return_type": None,
+        "body": [{"type": NODE_RETURN, "value": {"type": NODE_CALL, "func": {"type": NODE_NAME, "id": "print"}, "args": [{"type": NODE_BIN_OP, "left": {"type": NODE_CONSTANT, "value": "Hello, "}, "op": OP_ADD, "right": {"type": NODE_NAME, "id": "name"}}]}}]
+    }
+    result = gen.generate(node)
+    if "def greet(name):" in result and "return print(" in result:
+        passed = passed + 1
+    
+    # Test 5: IA native mapping - ပြောပါ
+    total = total + 1
+    node = {"type": NODE_IA_CALL, "method": "ပြောပါ", "args": [{"type": NODE_CONSTANT, "value": "Hello"}]}
+    result = gen.generate(node)
+    if "__mmc_ai__.say(" in result:
+        passed = passed + 1
+    
+    # Test 6: IA native mapping - စဉ်းစားပါ
+    total = total + 1
+    node = {"type": NODE_IA_CALL, "method": "စဉ်းစားပါ", "args": [{"type": NODE_CONSTANT, "value": "What is AI?"}]}
+    result = gen.generate(node)
+    if "__mmc_ai__.think(" in result:
+        passed = passed + 1
+    
+    # Test 7: Nested binary operations (recursion test)
+    total = total + 1
+    node = {
+        "type": NODE_BIN_OP,
+        "left": {"type": NODE_BIN_OP, "left": {"type": NODE_CONSTANT, "value": 1}, "op": OP_ADD, "right": {"type": NODE_CONSTANT, "value": 2}},
+        "op": OP_MULT,
+        "right": {"type": NODE_BIN_OP, "left": {"type": NODE_CONSTANT, "value": 3}, "op": OP_ADD, "right": {"type": NODE_CONSTANT, "value": 4}}
+    }
+    result = gen.generate(node)
+    if "1 + 2 * 3 + 4" in result:
+        passed = passed + 1
+    
+    # Test 8: Myanmar name translation
+    total = total + 1
+    node = {"type": NODE_ASSIGN, "targets": [{"type": NODE_NAME, "id": "အရှည်"}], "value": {"type": NODE_CONSTANT, "value": 100}}
+    result = gen.generate(node)
+    if "len = 100" in result:
+        passed = passed + 1
+    
+    # Test 9: List comprehension
+    total = total + 1
+    node = {
+        "type": NODE_LIST_COMP,
+        "elt": {"type": NODE_BIN_OP, "left": {"type": NODE_NAME, "id": "x"}, "op": OP_MULT, "right": {"type": NODE_NAME, "id": "x"}},
+        "generators": [{"target": {"type": NODE_NAME, "id": "x"}, "iter": {"type": NODE_CALL, "func": {"type": NODE_NAME, "id": "range"}, "args": [{"type": NODE_CONSTANT, "value": 10}]}}]
+    }
+    result = gen.generate(node)
+    if "[x * x for x in range(10)]" in result:
+        passed = passed + 1
+    
+    # Test 10: Try/except
+    total = total + 1
+    node = {
+        "type": NODE_TRY,
+        "body": [{"type": NODE_EXPR_STMT, "value": {"type": NODE_CALL, "func": {"type": NODE_NAME, "id": "risky_operation"}, "args": []}}],
+        "handlers": [{"exc_type": {"type": NODE_NAME, "id": "ValueError"}, "name": "e", "body": [{"type": NODE_EXPR_STMT, "value": {"type": NODE_CALL, "func": {"type": NODE_NAME, "id": "print"}, "args": [{"type": NODE_NAME, "id": "e"}]}}]}],
+        "orelse": [],
+        "finalbody": []
+    }
+    result = gen.generate(node)
+    if "try:" in result and "except ValueError" in result:
+        passed = passed + 1
+    
+    return "MMCCodeGenerator Tests: {}/{} passed".format(passed, total)

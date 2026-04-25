@@ -1,0 +1,121 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Test Suite - IA Integration Tests
+# Phase 3.6: Self-Hosting Transition
+#
+# Tests the complete MMC-Native Pipeline:
+#   mmc_lexer.mmc -> mmc_parser.mmc -> mmc_codegen.mmc -> Python
+#
+# Test Coverage:
+#   T1:  Variable declaration and assignment
+#   T2:  Myanmar digit support (၁၂၃ -> 123)
+#   T3:  Conditional statements (if/elif/else)
+#   T4:  For loops and while loops
+#   T5:  Function definitions and calls
+#   T6:  String operations (Myanmar methods)
+#   T7:  List operations
+#   T8:  Dict operations
+#   T9:  IA call - all 4 keyword variants
+#   T10: IA call - Myanmar methods
+#   T11: IA call - English methods
+#   T12: Try/Except error handling
+#   T13: Nested expressions
+#   T14: Comparison operators
+# =================================================================
+
+# --- T1: Variable Declaration and Assignment ---
+ကိန်း အရမ်း = "Hello MMC!"
+ကိန်း သတိမှတ် = ၄၂
+ပုံနှိပ်(အရမ်း)
+ပုံနှိပ်(သတိမှတ်)
+
+# --- T2: Myanmar Digit Support ---
+ကိန်း မြင့် = ၁၀၀
+ပုံနှိပ်("Myanmar digits: ၁၂၃ + ၄၅၆ = ", ၁၂၃ + ၄၅၆)
+ပုံနှိပ်("Value: ", မြင့်)
+
+# --- T3: Conditional Statements ---
+ကိန်း အရင်း = ၂၅
+
+အကယ်၍ အရင်း >= ၁၈:
+    ပုံနှိပ်("Adult")
+မဟုတ်လျှင် အရင်း >= ၁၃:
+    ပုံနှိပ်("Teenager")
+မဟုတ်ပါက:
+    ပုံနှိပ်("Child")
+
+# --- T4: For Loops (with explicit ထဲတွင် = in) ---
+အတွက် i ထဲတွင် ပတ်လမ်း(၅):
+    ပုံနှိပ်("Loop: ", i)
+
+# While loop
+ကိန်း x = ၀
+လုပ်နေစဉ် x < ၃:
+    ပုံနှိပ်("While: ", x)
+    x = x + ၁
+
+# --- T5: Functions ---
+အဓိပ္ပာယ် add_numbers(a, b):
+    ပြန်ပေး a + b
+
+အဓိပ္ပာယ် make_upper(name):
+    ပြန်ပေး name.စာလုံးကြီး()
+
+ပုံနှိပ်("Sum: ", add_numbers(၃, ၄))
+ပုံနှိပ်("Upper: ", make_upper("hello world"))
+
+# --- T6: String Operations ---
+ကိန်း text = "Hello Myanmar"
+ပုံနှိပ်("Upper: ", text.စာလုံးကြီး())
+ပုံနှိပ်("Lower: ", text.စာလုံးသေး())
+ပုံနှိပ်("Split: ", text.စာခွဲ())
+
+# --- T7: List Operations ---
+ကိန်း nums = [၁, ၂, ၃, ၄, ၅]
+nums.နောက်ဆုံး_ထည့်(၆)
+ပုံနှိပ်("List: ", nums)
+ပုံနှိပ်("Length: ", len(nums))
+ပုံနှိပ်("Sum: ", sum(nums))
+
+# --- T8: Dict Operations ---
+ကိန်း data = {"name": "MMC", "version": ၉}
+data.ပေါင်းထည့်({"year": ၂၀၂၅})
+ပုံနှိပ်("Dict: ", data)
+
+# --- T9: IA Call - All 4 Keyword Variants ---
+အေအိုင်AI.ပြောပါ("Hello from IA variant 1: အေအိုင်AI!")
+AI.စဉ်းစားပါ("Thinking with variant 2: AI!")
+ia.ဖော်ပြပါ("Explaining with variant 3: ia!")
+အိုင်အေ.သင်ယူပါ("Learning with variant 4: အိုင်အေ!")
+
+# --- T10: IA Call - Myanmar Methods ---
+အေအိုင်AI.ဆက်ပါ("Connecting...")
+အေအိုင်AI.စစ်ဆေးပါ("Checking status...")
+အေအိုင်AI.ဖုံးပါ("What is MMC?")
+
+# --- T11: IA Call - English Methods ---
+AI.say("English: say")
+AI.think("English: think")
+AI.explain("English: explain")
+AI.learn("English: learn")
+
+# --- T12: Try/Except ---
+ကြိုးစား:
+    ကိန်း result = ၁၀ / ၀
+ဖမ်းမိ:
+    ပုံနှိပ်("Caught division by zero!")
+
+# --- T13: Nested Expressions ---
+ကိန်း complex_val = (၂ + ၃) * (၄ - ၁)
+ပုံနှိပ်("Complex: (2+3)*(4-1) = ", complex_val)
+
+# --- T14: Comparison Operators ---
+ကိန်း a = ၁၀
+ကိန်း b = ၂၀
+အကယ်၍ a < b:
+    ပုံနှိပ်("10 < 20: True")
+အကယ်၍ a == b:
+    ပုံနှိပ်("10 == 20: False")
+
+# --- Completion ---
+ပုံနှိပ်("=== All IA tests passed! ===")

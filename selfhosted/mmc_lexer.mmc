@@ -1,0 +1,620 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Lexer v1.0 - Self-Hosted (Written in MMC Language)
+# Phase 3.6: Self-Hosting Transition
+#
+# Tokenizes MMC source code into a stream of Token objects.
+# Output format is compatible with mmc_parser.mmc input.
+#
+# Token Format:
+#   {"type": str, "value": str, "line": int, "col": int}
+#
+# IA Keyword Variants (all map to token type "IA"):
+#   'အေအိုင်AI', 'AI', 'ia', 'အိုင်အေ'
+#
+# Myanmar Digit Pipeline:
+#   '၁၂၃' -> Token(type=NUMBER, value='၁၂၃') -> Parser -> '123'
+#
+# Pipeline: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_codegen.mmc
+# =================================================================
+
+# =================================================================
+# SECTION 1: Token Type Constants
+# =================================================================
+
+TOK_WORD = "WORD"          # Identifiers, keywords (Myanmar & English)
+TOK_NUMBER = "NUMBER"      # Integer and float literals (including Myanmar digits)
+TOK_STRING = "STRING"      # String literals (single, double, triple-quoted)
+TOK_FSTRING = "FSTRING"    # f-string literals
+TOK_OP = "OP"              # Operators and punctuation
+TOK_NEWLINE = "NEWLINE"    # Line breaks
+TOK_COMMENT = "COMMENT"    # Python-style # comments
+TOK_INDENT = "INDENT"      # Indentation marker
+TOK_DEDENT = "DEDENT"      # Dedentation marker
+TOK_EOF = "EOF"            # End of file
+TOK_IA = "IA"              # IA keyword (any of the 4 variants)
+TOK_UNKNOWN = "UNKNOWN"    # Unrecognized characters
+
+
+# =================================================================
+# SECTION 2: Myanmar Keyword Tables
+# =================================================================
+
+# Myanmar statement keywords
+MM_STMT_KEYWORDS = {
+    "အကယ်၍": "if", "မဟုတ်ပါက": "else", "မဟုတ်လျှင်": "elif",
+    "အတွက်": "for", "လုပ်နေစဉ်": "while", "ရပ်": "break",
+    "ဆက်လုပ်": "continue", "အဓိပ္ပာယ်": "def", "ပြန်ပေး": "return",
+    "အတန်း": "class", "တင်သွင်း": "import", "မှ": "from",
+    "ကြိုးစား": "try", "ဖမ်းမိ": "except", "နောက်ဆုံး": "finally",
+    "ချမြှောက်": "raise", "မတူညီ": "async", "မျှော်": "await",
+    "ညီမျှလျှင်": "and", "သို့မဟုတ်": "or", "မဟုတ်": "not",
+    "အဖြစ်": "as", "ပေး": "yield", "များလိုက်": "lambda",
+    "နုတ်ထုတ်": "with", "စာသေးခံ": "assert",
+    "ကျန်ရမ်း": "pass", "ကြွင်းလဲ": "global", "ဒေသခံ": "nonlocal",
+    "ဖျက်ပါ": "del",
+}
+
+# Myanmar function keywords
+MM_FUNC_KEYWORDS = {
+    "ပုံနှိပ်": "print", "မေးမြန်း": "input", "အရှည်": "len",
+    "ဇယား": "type", "ကျပန်း": "str", "အချိန်": "int",
+    "လော့ဂရစ်သမ်": "float", "တန်ဂျင့်": "bool", "စာရင်း": "list",
+    "အရာဝတ္ထု": "dict", "အဘိဓာန်": "set", "ဆိုင်": "tuple",
+    "ပတ်လမ်း": "range", "သင်္ချာ": "abs", "အမြင့်ဆုံး": "max",
+    "အနိမ့်ဆုံး": "min", "ပေါင်းလုံး": "sum", "ရွေးချယ်": "sorted",
+    "ပြဿနာ": "map", "ကုလသိုက်": "filter", "ရောကိုင်": "enumerate",
+    "ဇကာ": "zip", "မြှင့်တင်": "round", "ဖန်တီး": "chr",
+    "စကားလုံး": "ord", "ဖွင့်": "open",
+}
+
+# Myanmar value keywords
+MM_VALUE_KEYWORDS = {
+    "မှန်": "True", "မှား": "False", "ဘာမှမရှိ": "None",
+    "ဗလာ": "None", "ဒီ": "self", "ဒါ": "cls",
+}
+
+# Myanmar type keywords
+MM_TYPE_KEYWORDS = {
+    "စာသား": "str", "အချိန်": "int", "လော့ဂရစ်သမ်": "float",
+    "တန်ဂျင့်": "bool", "စာရင်း": "list", "အရာဝတ္ထု": "dict",
+    "အဘိဓာန်": "set", "ဆိုင်": "tuple", "မပါ": "None",
+    "အရာရည်": "Any", "ခေါ်ဆိုချက်": "Callable",
+    "ဖျက်ရှင်း": "Optional",
+}
+
+# Myanmar method keywords
+MM_METHOD_KEYWORDS = {
+    "စာလုံးကြီး": "upper", "စာလုံးသေး": "lower", "စမြည့်": "capitalize",
+    "ဆုံးမြည့်": "title", "စာဆက်": "join", "စာခွဲ": "split",
+    "ဖြတ်": "strip", "အစားထိုး": "replace", "ရှာဖွေ": "find",
+    "အမှန်နေ": "isalpha", "ဂဏန်းဖြစ်": "isdigit", "စာသားဖြစ်": "isalnum",
+    "ပိုင်ဆိုင်": "startswith", "ပြီးဆုံးဖြစ်": "endswith",
+    "နောက်ဆုံး_ထည့်": "append", "ထည့်သွင်း": "insert",
+    "အရှည်_ထည့်": "extend", "ရှင်း": "pop", "စီ": "sort",
+    "ပြန်လဲ": "reverse", "ရှင်းလင်း": "clear",
+    "သော့များ": "keys", "တန်ဖိုးများ": "values", "အတွဲများ": "items",
+    "ရယူ": "get", "ပေါင်းထည့်": "update", "ပါဝင်": "add",
+    "ဖိုင်ဖတ်": "read", "ဖိုင်ရေး": "write", "ဖိုင်ဖျက်": "close",
+    "ပုံ_ပြောင်း": "copy", "ရှိမရှိ": "count", "ရှာမှတ်": "index",
+    "ဖော်ပြ": "format",
+}
+
+# Variable declaration prefixes (skipped in output)
+SKIP_KEYWORDS = {"ကိန်း", "အတည်", "နေရာ", "var", "let", "const"}
+
+# IA keyword variants - all map to TOK_IA
+IA_KEYWORD_VARIANTS = ["အေအိုင်AI", "AI", "ia", "အိုင်အေ"]
+
+# IA method keywords (recognized after IA keyword)
+IA_METHOD_KEYWORDS = {
+    "ပြောပါ": "say", "သင်ယူပါ": "learn", "စဉ်းစားပါ": "think",
+    "ဖော်ပြပါ": "explain", "ဆက်ပါ": "connect", "ပြင်ဆင်ပါ": "update",
+    "စစ်ဆေးပါ": "check", "ဖုံးပါ": "ask", "ရှင်းပြပါ": "describe",
+    "ညွှန်ပါ": "teach", "ဖော်ကျားပါ": "visualize",
+    "ဖိုးထုတ်ပါ": "generate", "ထုတ်ပေးပါ": "respond",
+    "ခွဲခြမ်းပါ": "analyze", "တိုက်ရိုက်ပါ": "chat",
+    "ဖြေရှင်းပါ": "translate", "စူးစိုက်ပါ": "summarize", "ဆန်ပါ": "dream",
+}
+
+# English IA method aliases
+IA_METHOD_EN = {
+    "say": "say", "learn": "learn", "think": "think", "explain": "explain",
+    "connect": "connect", "update": "update", "check": "check", "ask": "ask",
+    "describe": "describe", "teach": "teach", "visualize": "visualize",
+    "generate": "generate", "respond": "respond", "analyze": "analyze",
+    "chat": "chat", "translate": "translate", "summarize": "summarize", "dream": "dream",
+}
+
+
+# =================================================================
+# SECTION 3: Myanmar Digit Mapping
+# =================================================================
+
+MYANMAR_DIGITS = {
+    "၀": "0", "၁": "1", "၂": "2", "၃": "3", "၄": "4",
+    "၅": "5", "၆": "6", "၇": "7", "၈": "8", "၉": "9",
+}
+
+MYANMAR_DIGIT_SET = set(MYANMAR_DIGITS.keys())
+
+
+def convert_myanmar_digits(text):
+    """Convert Myanmar digits (၀-၉) to Arabic digits (0-9) in text."""
+    result = []
+    for ch in text:
+        if ch in MYANMAR_DIGITS:
+            result.append(MYANMAR_DIGITS[ch])
+        else:
+            result.append(ch)
+    return "".join(result)
+
+
+def is_myanmar_digit(ch):
+    """Check if a character is a Myanmar digit."""
+    return ch in MYANMAR_DIGIT_SET
+
+
+# =================================================================
+# SECTION 4: Multi-character Operator Table
+# =================================================================
+
+# Operators matched longest-first (3-char, 2-char, 1-char)
+TRIPLE_OPS = {"//=", "**="}
+DOUBLE_OPS = {">=", "<=", "==", "!=", "->", "+=", "-=", "*=", "/=",
+              "//", "**", "<<", ">>", "&&", "||", ":=", "??"}
+SINGLE_OPS = set("+-*/%=<>()[]{}.,:;@\\~^&|!?")
+BRACKETS_OPEN = set("([{")
+BRACKETS_CLOSE = set(")]}")
+
+
+# =================================================================
+# SECTION 5: Tokenizer Class
+# =================================================================
+
+class MMCToken:
+    """Represents a single token from MMC source code."""
+
+    def __init__(self, type, value, line, col):
+        self.type = type
+        self.value = value
+        self.line = line
+        self.col = col
+
+    def __repr__(self):
+        return "Token(%s, %r, %d, %d)" % (self.type, self.value, self.line, self.col)
+
+    def to_dict(self):
+        """Convert token to dict format for parser consumption."""
+        return {"type": self.type, "value": self.value, "line": self.line, "col": self.col}
+
+
+class MMCLexer:
+    """Self-hosted MMC Lexer.
+
+    Tokenizes MMC source code into a stream of MMCToken objects.
+    Supports Myanmar keywords, Myanmar digits, IA keywords (4 variants),
+    and all Python operator syntax.
+
+    Data Contract (output for mmc_parser.mmc):
+        Token dict: {"type": str, "value": str, "line": int, "col": int}
+        Token types: WORD, NUMBER, STRING, FSTRING, OP, NEWLINE,
+                     COMMENT, INDENT, DEDENT, EOF, IA, UNKNOWN
+    """
+
+    def __init__(self, source=""):
+        self.source = source
+        self.pos = 0
+        self.line = 1
+        self.col = 1
+        self.tokens = []
+        self.errors = []
+        self.indent_stack = [0]  # Track indentation levels
+
+    def tokenize(self, source=None):
+        """Tokenize MMC source code.
+
+        Args:
+            source: Optional MMC source string. Uses self.source if None.
+
+        Returns:
+            List of MMCToken objects.
+        """
+        if source is not None:
+            self.source = source
+        self.pos = 0
+        self.line = 1
+        self.col = 1
+        self.tokens = []
+        self.errors = []
+        self.indent_stack = [0]
+
+        lines = self.source.split("\n")
+
+        for line_str in lines:
+            self._tokenize_line(line_str)
+            self.tokens.append(MMCToken(TOK_NEWLINE, "\\n", self.line, self.col))
+            self.line += 1
+            self.col = 1
+
+        # Emit remaining dedents
+        while len(self.indent_stack) > 1:
+            self.indent_stack.pop()
+            self.tokens.append(MMCToken(TOK_DEDENT, "", self.line, 0))
+
+        self.tokens.append(MMCToken(TOK_EOF, "", self.line, self.col))
+        return self.tokens
+
+    def _tokenize_line(self, line_str):
+        """Tokenize a single line of MMC source."""
+        i = 0
+        line_len = len(line_str)
+
+        # Step 1: Measure and emit INDENT/DEDENT tokens
+        indent = 0
+        while i < line_len and line_str[i] in (' ', '\t'):
+            if line_str[i] == '\t':
+                indent = indent + 4
+            else:
+                indent = indent + 1
+            i += 1
+
+        self.col = indent + 1
+
+        # Handle indentation changes
+        if indent > self.indent_stack[-1]:
+            self.indent_stack.append(indent)
+            self.tokens.append(MMCToken(TOK_INDENT, "    " * (indent // 4), self.line, 1))
+        else:
+            while indent < self.indent_stack[-1]:
+                self.indent_stack.pop()
+                self.tokens.append(MMCToken(TOK_DEDENT, "", self.line, 1))
+
+        # Step 2: Tokenize the rest of the line
+        while i < line_len:
+            ch = line_str[i]
+
+            # Skip whitespace
+            if ch in (' ', '\t'):
+                i += 1
+                self.col += 1
+                continue
+
+            # Comment
+            if ch == '#':
+                self.tokens.append(MMCToken(TOK_COMMENT, line_str[i:], self.line, self.col))
+                break
+
+            # String literals
+            if ch in ('"', "'"):
+                tok, i = self._read_string(line_str, i, ch)
+                self.tokens.append(tok)
+                continue
+
+            # f-string literals
+            if ch == 'f' and i + 1 < line_len and line_str[i + 1] in ('"', "'"):
+                tok, i = self._read_string(line_str, i + 1, line_str[i + 1])
+                self.tokens.append(MMCToken(TOK_FSTRING, "f" + tok.value, self.line, self.col))
+                self.col += len(tok.value) + 1
+                continue
+
+            # Numbers (including Myanmar digits)
+            if ch.isdigit() or is_myanmar_digit(ch) or (ch == '.' and i + 1 < line_len and (line_str[i + 1].isdigit() or is_myanmar_digit(line_str[i + 1]))):
+                tok, i = self._read_number(line_str, i)
+                self.tokens.append(tok)
+                continue
+
+            # Operators (longest match first)
+            if ch in SINGLE_OPS or ch in ('=', '<', '>', '!'):
+                tok, i = self._read_operator(line_str, i)
+                self.tokens.append(tok)
+                continue
+
+            # Identifiers and keywords (including Myanmar text)
+            if self._is_identifier_start(ch):
+                tok, i = self._read_identifier(line_str, i)
+                self.tokens.append(tok)
+                continue
+
+            # Unknown character
+            self.tokens.append(MMCToken(TOK_UNKNOWN, ch, self.line, self.col))
+            self.errors.append("Line %d, Col %d: Unexpected character '%s'" % (self.line, self.col, ch))
+            i += 1
+            self.col += 1
+
+    def _read_string(self, line_str, start, quote_char):
+        """Read a string literal (single, double, or triple-quoted)."""
+        i = start
+        col = self.col
+
+        # Check for triple-quote
+        triple = False
+        if i + 2 < len(line_str) and line_str[i:i + 3] == quote_char * 3:
+            triple = True
+            i += 3
+        else:
+            i += 1
+
+        value = quote_char
+        if triple:
+            value = quote_char * 3
+
+        while i < len(line_str):
+            ch = line_str[i]
+            value = value + ch
+
+            if ch == '\\' and i + 1 < len(line_str):
+                value = value + line_str[i + 1]
+                i += 2
+                self.col += 2
+                continue
+
+            if triple:
+                if i + 2 < len(line_str) and line_str[i:i + 3] == quote_char * 3:
+                    value = value + quote_char * 2
+                    i += 3
+                    self.col += 3
+                    break
+            else:
+                if ch == quote_char:
+                    i += 1
+                    self.col += 1
+                    break
+
+            i += 1
+            self.col += 1
+
+        return MMCToken(TOK_STRING, value, self.line, col), i
+
+    def _read_number(self, line_str, start):
+        """Read a numeric literal (int or float, supports Myanmar digits)."""
+        i = start
+        col = self.col
+        value = ""
+        has_dot = False
+
+        while i < len(line_str):
+            ch = line_str[i]
+            if ch.isdigit() or is_myanmar_digit(ch):
+                value = value + ch
+                i += 1
+                self.col += 1
+            elif ch == '.' and not has_dot:
+                # Check if next char is a digit (avoid treating method call dot as decimal)
+                if i + 1 < len(line_str) and (line_str[i + 1].isdigit() or is_myanmar_digit(line_str[i + 1])):
+                    has_dot = True
+                    value = value + ch
+                    i += 1
+                    self.col += 1
+                else:
+                    break
+            else:
+                break
+
+        # Convert Myanmar digits to Arabic for the token value
+        converted = convert_myanmar_digits(value)
+        return MMCToken(TOK_NUMBER, converted, self.line, col), i
+
+    def _read_operator(self, line_str, start):
+        """Read an operator (longest match: 3-char > 2-char > 1-char)."""
+        i = start
+        col = self.col
+        remaining = line_len_safe = len(line_str)
+
+        # Check 3-character operators
+        if i + 2 < remaining:
+            three = line_str[i:i + 3]
+            if three in TRIPLE_OPS:
+                self.col += 3
+                return MMCToken(TOK_OP, three, self.line, col), i + 3
+
+        # Check 2-character operators
+        if i + 1 < remaining:
+            two = line_str[i:i + 2]
+            if two in DOUBLE_OPS:
+                self.col += 2
+                return MMCToken(TOK_OP, two, self.line, col), i + 2
+
+        # Single character operator
+        self.col += 1
+        return MMCToken(TOK_OP, line_str[i], self.line, col), i + 1
+
+    def _read_identifier(self, line_str, start):
+        """Read an identifier or keyword.
+
+        Recognizes:
+        - Myanmar keywords (statements, functions, values, types, methods)
+        - English keywords
+        - IA keyword variants (4 variants -> TOK_IA)
+        - Variable declaration prefixes (skipped)
+        - Regular identifiers (Myanmar or ASCII)
+        """
+        i = start
+        col = self.col
+        value = ""
+
+        while i < len(line_str):
+            ch = line_str[i]
+            if self._is_identifier_char(ch):
+                value = value + ch
+                i += 1
+                self.col += 1
+            else:
+                break
+
+        # Skip variable declaration prefixes
+        if value in SKIP_KEYWORDS:
+            # Return as WORD but mark as skip for parser
+            return MMCToken(TOK_WORD, value, self.line, col), i
+
+        # Check IA keyword variants (4 variants)
+        if value in IA_KEYWORD_VARIANTS:
+            return MMCToken(TOK_IA, value, self.line, col), i
+
+        # Check Myanmar statement keywords
+        if value in MM_STMT_KEYWORDS:
+            return MMCToken(TOK_WORD, value, self.line, col), i
+
+        # Check Myanmar function keywords
+        if value in MM_FUNC_KEYWORDS:
+            return MMCToken(TOK_WORD, value, self.line, col), i
+
+        # Check Myanmar value keywords
+        if value in MM_VALUE_KEYWORDS:
+            return MMCToken(TOK_WORD, value, self.line, col), i
+
+        # Check Myanmar type keywords
+        if value in MM_TYPE_KEYWORDS:
+            return MMCToken(TOK_WORD, value, self.line, col), i
+
+        # Check Myanmar method keywords
+        if value in MM_METHOD_KEYWORDS:
+            return MMCToken(TOK_WORD, value, self.line, col), i
+
+        # Check IA method keywords (can be used standalone or after .)
+        if value in IA_METHOD_KEYWORDS or value in IA_METHOD_EN:
+            return MMCToken(TOK_WORD, value, self.line, col), i
+
+        # Check English Python keywords
+        py_keywords = {"if", "else", "elif", "for", "while", "break", "continue",
+                       "def", "return", "class", "import", "from", "try", "except",
+                       "finally", "raise", "async", "await", "and", "or", "not",
+                       "as", "in", "is", "yield", "lambda", "with", "assert",
+                       "pass", "global", "nonlocal", "del", "match", "case",
+                       "True", "False", "None", "self", "cls",
+                       "print", "input", "len", "type", "str", "int", "float",
+                       "bool", "list", "dict", "set", "tuple", "range", "abs",
+                       "max", "min", "sum", "sorted", "map", "filter",
+                       "enumerate", "zip", "round", "chr", "ord", "open"}
+        if value in py_keywords:
+            return MMCToken(TOK_WORD, value, self.line, col), i
+
+        # Regular identifier
+        return MMCToken(TOK_WORD, value, self.line, col), i
+
+    def _is_identifier_start(self, ch):
+        """Check if character can start an identifier."""
+        if ch.isalpha() or ch == '_':
+            return True
+        # Myanmar Unicode range: U+1000 to U+109F (Myanmar script)
+        if ord(ch) >= 0x1000 and ord(ch) <= 0x109F:
+            return True
+        # Extended Myanmar: U+AA60 to U+AA7F
+        if ord(ch) >= 0xAA60 and ord(ch) <= 0xAA7F:
+            return True
+        # Myanmar Extended-B: U+A9E0 to U+A9FF
+        if ord(ch) >= 0xA9E0 and ord(ch) <= 0xA9FF:
+            return True
+        return False
+
+    def _is_identifier_char(self, ch):
+        """Check if character can be part of an identifier."""
+        if self._is_identifier_start(ch):
+            return True
+        if ch.isdigit() or is_myanmar_digit(ch):
+            return True
+        return False
+
+    def get_tokens(self):
+        """Return list of token dicts (for parser consumption)."""
+        return [t.to_dict() for t in self.tokens]
+
+    def get_errors(self):
+        """Return list of lexing errors."""
+        return self.errors
+
+    def has_errors(self):
+        """Check if any lexing errors occurred."""
+        return len(self.errors) > 0
+
+
+# =================================================================
+# SECTION 6: Standalone Tokenize Function
+# =================================================================
+
+def tokenize(source):
+    """Tokenize MMC source code.
+
+    Convenience function that creates an MMCLexer and tokenizes the source.
+
+    Args:
+        source: MMC source code string.
+
+    Returns:
+        List of MMCToken objects.
+    """
+    lexer = MMCLexer(source)
+    return lexer.tokenize(source)
+
+
+def tokenize_to_dicts(source):
+    """Tokenize MMC source and return token dicts.
+
+    Args:
+        source: MMC source code string.
+
+    Returns:
+        List of token dicts: {"type": str, "value": str, "line": int, "col": int}
+    """
+    lexer = MMCLexer(source)
+    tokens = lexer.tokenize(source)
+    return lexer.get_tokens()
+
+
+# =================================================================
+# SECTION 7: Token Stream Utility
+# =================================================================
+
+class TokenStream:
+    """Wraps a token list for parser consumption.
+
+    Provides peek(), advance(), expect() methods for recursive descent parsing.
+    Data contract: consumes token dicts from MMCLexer.
+    """
+
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.pos = 0
+
+    def peek(self, offset=0):
+        """Look ahead at token without consuming."""
+        idx = self.pos + offset
+        if idx < len(self.tokens):
+            return self.tokens[idx]
+        return {"type": TOK_EOF, "value": "", "line": -1, "col": -1}
+
+    def advance(self):
+        """Consume and return current token."""
+        tok = self.tokens[self.pos] if self.pos < len(self.tokens) else {"type": TOK_EOF, "value": "", "line": -1, "col": -1}
+        self.pos += 1
+        return tok
+
+    def current(self):
+        """Return current token without consuming."""
+        return self.peek(0)
+
+    def expect(self, type=None, value=None):
+        """Expect a specific token type and/or value. Consume if matched."""
+        tok = self.current()
+        if type is not None and tok["type"] != type:
+            raise SyntaxError("Expected token type %s but got %s (%r) at line %d" % (type, tok["type"], tok["value"], tok["line"]))
+        if value is not None and tok["value"] != value:
+            raise SyntaxError("Expected %r but got %r at line %d" % (value, tok["value"], tok["line"]))
+        return self.advance()
+
+    def match(self, type=None, value=None):
+        """Check if current token matches without consuming."""
+        tok = self.current()
+        if type is not None and tok["type"] != type:
+            return False
+        if value is not None and tok["value"] != value:
+            return False
+        return True
+
+    def match_value(self, value):
+        """Check if current token value matches (any type)."""
+        return self.current()["value"] == value
+
+    def at_end(self):
+        """Check if we've consumed all tokens."""
+        return self.pos >= len(self.tokens) or self.current()["type"] == TOK_EOF

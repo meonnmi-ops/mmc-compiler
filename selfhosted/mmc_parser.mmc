@@ -1,0 +1,1492 @@
+# -*- coding: utf-8 -*-
+# =================================================================
+# MMC Parser v1.0 - Self-Hosted (Written in MMC Language)
+# Phase 3.6: Self-Hosting Transition
+#
+# Parses token stream from mmc_lexer.mmc into an Abstract Syntax Tree (AST).
+# AST format matches mmc_codegen.mmc data contract exactly.
+#
+# AST Node Format (dict):
+#   {"type": str, ...node-specific fields...}
+#
+# Data Contract with mmc_codegen.mmc:
+#   Every node has a "type" field matching codegen NODE_* constants.
+#   Field names match codegen handler expectations exactly.
+#
+# Pipeline: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_codegen.mmc
+# =================================================================
+
+# =================================================================
+# SECTION 1: AST Node Type Constants (must match mmc_codegen.mmc)
+# =================================================================
+
+# --- Top-level ---
+NODE_PROGRAM = "Program"
+
+# --- Statement nodes ---
+NODE_FUNCTION_DEF = "FunctionDef"
+NODE_CLASS_DEF = "ClassDef"
+NODE_RETURN = "Return"
+NODE_DELETE = "Delete"
+NODE_ASSIGN = "Assign"
+NODE_AUG_ASSIGN = "AugAssign"
+NODE_ANN_ASSIGN = "AnnAssign"
+NODE_EXPR_STMT = "Expr"
+NODE_IF = "If"
+NODE_FOR = "For"
+NODE_WHILE = "While"
+NODE_BREAK = "Break"
+NODE_CONTINUE = "Continue"
+NODE_PASS = "Pass"
+NODE_IMPORT = "Import"
+NODE_IMPORT_FROM = "ImportFrom"
+NODE_TRY = "Try"
+NODE_RAISE = "Raise"
+NODE_ASSERT = "Assert"
+NODE_GLOBAL = "Global"
+NODE_NONLOCAL = "Nonlocal"
+NODE_MATCH = "Match"
+NODE_WITH = "With"
+NODE_YIELD = "Yield"
+NODE_YIELD_FROM = "YieldFrom"
+
+# --- Expression nodes ---
+NODE_CALL = "Call"
+NODE_IA_CALL = "IACall"
+NODE_BIN_OP = "BinOp"
+NODE_UNARY_OP = "UnaryOp"
+NODE_BOOL_OP = "BoolOp"
+NODE_COMPARE = "Compare"
+NODE_NAME = "Name"
+NODE_CONSTANT = "Constant"
+NODE_ATTRIBUTE = "Attribute"
+NODE_SUBSCRIPT = "Subscript"
+NODE_LIST = "List"
+NODE_DICT = "Dict"
+NODE_SET = "Set"
+NODE_TUPLE = "Tuple"
+NODE_LAMBDA = "Lambda"
+NODE_IF_EXPR = "IfExpr"
+NODE_STARRED = "Starred"
+NODE_SLICE = "Slice"
+NODE_LIST_COMP = "ListComp"
+NODE_DICT_COMP = "DictComp"
+NODE_SET_COMP = "SetComp"
+NODE_GENERATOR_EXPR = "GeneratorExpr"
+NODE_FORMATTED_VALUE = "FormattedValue"
+NODE_JOINED_STR = "JoinedStr"
+NODE_FSTRING = "FString"
+NODE_WALRUS = "Walrus"
+
+
+# =================================================================
+# SECTION 2: Operator Constants (must match mmc_codegen.mmc)
+# =================================================================
+
+OP_ADD = "Add"
+OP_SUB = "Sub"
+OP_MULT = "Mult"
+OP_DIV = "Div"
+OP_FLOOR_DIV = "FloorDiv"
+OP_MOD = "Mod"
+OP_POW = "Pow"
+OP_LSHIFT = "LShift"
+OP_RSHIFT = "RShift"
+OP_BIT_OR = "BitOr"
+OP_BIT_XOR = "BitXor"
+OP_BIT_AND = "BitAnd"
+OP_MAT_MULT = "MatMult"
+OP_AND = "And"
+OP_OR = "Or"
+OP_NOT = "Not"
+OP_INVERT = "Invert"
+OP_UADD = "UAdd"
+OP_USUB = "USub"
+OP_EQ = "Eq"
+OP_NOT_EQ = "NotEq"
+OP_LT = "Lt"
+OP_LT_E = "LtE"
+OP_GT = "Gt"
+OP_GT_E = "GtE"
+OP_IS = "Is"
+OP_IS_NOT = "IsNot"
+OP_IN = "In"
+OP_NOT_IN = "NotIn"
+
+
+# =================================================================
+# SECTION 3: Keyword Translation Tables
+# =================================================================
+
+# Token value -> Python keyword (used for recognition in parser)
+STMT_MAP = {
+    "if": "if", "else": "else", "elif": "elif",
+    "for": "for", "while": "while", "break": "break",
+    "continue": "continue", "def": "def", "return": "return",
+    "class": "class", "import": "import", "from": "from",
+    "try": "try", "except": "except", "finally": "finally",
+    "raise": "raise", "async": "async", "await": "await",
+    "and": "and", "or": "or", "not": "not",
+    "as": "as", "yield": "yield", "lambda": "lambda",
+    "with": "with", "assert": "assert", "pass": "pass",
+    "global": "global", "nonlocal": "nonlocal", "del": "del",
+    "match": "match", "case": "case",
+    # Myanmar variants
+    "အကယ်၍": "if", "မဟုတ်ပါက": "else", "မဟုတ်လျှင်": "elif",
+    "အတွက်": "for", "လုပ်နေစဉ်": "while", "ရပ်": "break",
+    "ဆက်လုပ်": "continue", "အဓိပ္ပာယ်": "def", "ပြန်ပေး": "return",
+    "အတန်း": "class", "တင်သွင်း": "import", "မှ": "from",
+    "ကြိုးစား": "try", "ဖမ်းမိ": "except", "နောက်ဆုံး": "finally",
+    "ချမြှောက်": "raise", "မတူညီ": "async", "မျှော်": "await",
+    "ညီမျှလျှင်": "and", "သို့မဟုတ်": "or", "မဟုတ်": "not",
+    "အဖြစ်": "as", "ပေး": "yield", "များလိုက်": "lambda",
+    "နုတ်ထုတ်": "with", "စာသေးခံ": "assert",
+    "ကျန်ရမ်း": "pass", "ကြွင်းလဲ": "global", "ဒေသခံ": "nonlocal",
+    "ဖျက်ပါ": "del",
+}
+
+VALUE_MAP = {
+    "True": "True", "False": "False", "None": "None",
+    "self": "self", "cls": "cls",
+    "မှန်": "True", "မှား": "False", "ဘာမှမရှိ": "None",
+    "ဗလာ": "None", "ဒီ": "self", "ဒါ": "cls",
+}
+
+FUNC_MAP = {
+    "print": "print", "len": "len", "type": "type", "str": "str",
+    "int": "int", "float": "float", "bool": "bool", "list": "list",
+    "dict": "dict", "set": "set", "tuple": "tuple", "range": "range",
+    "abs": "abs", "max": "max", "min": "min", "sum": "sum",
+    "sorted": "sorted", "map": "map", "filter": "filter",
+    "enumerate": "enumerate", "zip": "zip", "round": "round",
+    "chr": "chr", "ord": "ord", "open": "open", "input": "input",
+    "isinstance": "isinstance", "super": "super", "next": "next",
+    # Myanmar variants
+    "ပုံနှိပ်": "print", "မေးမြန်း": "input", "အရှည်": "len",
+    "ဇယား": "type", "ကျပန်း": "str", "အချိန်": "int",
+    "လော့ဂရစ်သမ်": "float", "တန်ဂျင့်": "bool", "စာရင်း": "list",
+    "အရာဝတ္ထု": "dict", "အဘိဓာန်": "set", "ဆိုင်": "tuple",
+    "ပတ်လမ်း": "range", "သင်္ချာ": "abs", "အမြင့်ဆုံး": "max",
+    "အနိမ့်ဆုံး": "min", "ပေါင်းလုံး": "sum", "ရွေးချယ်": "sorted",
+    "ပြဿနာ": "map", "ကုလသိုက်": "filter", "ရောကိုင်": "enumerate",
+    "ဇကာ": "zip", "မြှင့်တင်": "round", "ဖန်တီး": "chr",
+    "စကားလုံး": "ord", "ဖွင့်": "open",
+}
+
+METHOD_MAP = {
+    "upper": "upper", "lower": "lower", "capitalize": "capitalize",
+    "title": "title", "join": "join", "split": "split", "strip": "strip",
+    "replace": "replace", "find": "find", "isalpha": "isalpha",
+    "isdigit": "isdigit", "isalnum": "isalnum", "startswith": "startswith",
+    "endswith": "endswith", "count": "count", "index": "index",
+    "format": "format", "append": "append", "insert": "insert",
+    "extend": "extend", "pop": "pop", "sort": "sort", "reverse": "reverse",
+    "clear": "clear", "keys": "keys", "values": "values", "items": "items",
+    "get": "get", "update": "update", "add": "add",
+    "read": "read", "write": "write", "close": "close", "copy": "copy",
+    # Myanmar variants
+    "စာလုံးကြီး": "upper", "စာလုံးသေး": "lower", "စမြည့်": "capitalize",
+    "ဆုံးမြည့်": "title", "စာဆက်": "join", "စာခွဲ": "split",
+    "ဖြတ်": "strip", "အစားထိုး": "replace", "ရှာဖွေ": "find",
+    "အမှန်နေ": "isalpha", "ဂဏန်းဖြစ်": "isdigit", "စာသားဖြစ်": "isalnum",
+    "ပိုင်ဆိုင်": "startswith", "ပြီးဆုံးဖြစ်": "endswith",
+    "နောက်ဆုံး_ထည့်": "append", "ထည့်သွင်း": "insert",
+    "အရှည်_ထည့်": "extend", "ရှင်း": "pop", "စီ": "sort",
+    "ပြန်လဲ": "reverse", "ရှင်းလင်း": "clear",
+    "သော့များ": "keys", "တန်ဖိုးများ": "values", "အတွဲများ": "items",
+    "ရယူ": "get", "ပေါင်းထည့်": "update", "ပါဝင်": "add",
+    "ဖိုင်ဖတ်": "read", "ဖိုင်ရေး": "write", "ဖိုင်ဖျက်": "close",
+    "ပုံ_ပြောင်း": "copy", "ရှိမရှိ": "count", "ရှာမှတ်": "index",
+    "ဖော်ပြ": "format",
+}
+
+# Variable declaration prefixes (to skip in parser)
+SKIP_PREFIXES = {"ကိန်း", "အတည်", "နေရာ", "var", "let", "const"}
+
+# IA keyword variants (token type "IA")
+IA_KEYWORDS = {"အေအိုင်AI", "AI", "ia", "အိုင်အေ"}
+
+# IA method mapping
+IA_METHOD_MAP = {
+    "ပြောပါ": "say", "သင်ယူပါ": "learn", "စဉ်းစားပါ": "think",
+    "ဖော်ပြပါ": "explain", "ဆက်ပါ": "connect", "ပြင်ဆင်ပါ": "update",
+    "စစ်ဆေးပါ": "check", "ဖုံးပါ": "ask", "ရှင်းပြပါ": "describe",
+    "ညွှန်ပါ": "teach", "ဖော်ကျားပါ": "visualize",
+    "ဖိုးထုတ်ပါ": "generate", "ထုတ်ပေးပါ": "respond",
+    "ခွဲခြမ်းပါ": "analyze", "တိုက်ရိုက်ပါ": "chat",
+    "ဖြေရှင်းပါ": "translate", "စူးစိုက်ပါ": "summarize", "ဆန်ပါ": "dream",
+    # English aliases
+    "say": "say", "learn": "learn", "think": "think", "explain": "explain",
+    "connect": "connect", "update": "update", "check": "check", "ask": "ask",
+    "describe": "describe", "teach": "teach", "visualize": "visualize",
+    "generate": "generate", "respond": "respond", "analyze": "analyze",
+    "chat": "chat", "translate": "translate", "summarize": "summarize", "dream": "dream",
+}
+
+
+# =================================================================
+# SECTION 4: Operator Parsing Tables
+# =================================================================
+
+# Binary operator precedence (lowest to highest)
+BINOP_PRECEDENCE = [
+    # Level 0: or
+    {"||", "or", "သို့မဟုတ်"},
+    # Level 1: and
+    {"&&", "and", "ညီမျှလျှင်"},
+    # Level 2: not (unary, handled separately)
+    # Level 3: in, not in, is, is not, <, <=, >, >=, !=, ==
+    {"in", "not in", "is", "is not", "<", "<=", ">", ">=", "!=", "=="},
+    # Level 4: | (bitwise or)
+    {"|"},
+    # Level 5: ^ (bitwise xor)
+    {"^"},
+    # Level 6: & (bitwise and)
+    {"&"},
+    # Level 7: <<, >>
+    {"<<", ">>"},
+    # Level 8: +, -
+    {"+", "-"},
+    # Level 9: *, /, //, %
+    {"*", "/", "//", "%"},
+    # Level 10: **, @
+    {"**", "@"},
+]
+
+# Operator string -> AST operator constant
+OP_SYMBOL_MAP = {
+    "+": OP_ADD, "-": OP_SUB, "*": OP_MULT, "/": OP_DIV,
+    "//": OP_FLOOR_DIV, "%": OP_MOD, "**": OP_POW,
+    "<<": OP_LSHIFT, ">>": OP_RSHIFT,
+    "|": OP_BIT_OR, "^": OP_BIT_XOR, "&": OP_BIT_AND,
+    "@": OP_MAT_MULT,
+    "and": OP_AND, "or": OP_OR, "not": OP_NOT,
+    "==": OP_EQ, "!=": OP_NOT_EQ,
+    "<": OP_LT, "<=": OP_LT_E, ">": OP_GT, ">=": OP_GT_E,
+    "is": OP_IS, "is not": OP_IS_NOT,
+    "in": OP_IN, "not in": OP_NOT_IN,
+    "||": OP_OR, "&&": OP_AND,
+    "ညီမျှလျှင်": OP_AND, "သို့မဟုတ်": OP_OR, "မဟုတ်": OP_NOT,
+}
+
+COMPARE_OPS = {"==", "!=", "<", "<=", ">", ">=", "is", "is not", "in", "not in"}
+
+AUG_ASSIGN_OPS = {"+=", "-=", "*=", "/=", "//=", "%=", "**=", "&=", "|=", "^=", "<<=", ">>=", "@="}
+
+# Aug assign operator -> AST operator constant
+AUG_ASSIGN_MAP = {
+    "+=": OP_ADD, "-=": OP_SUB, "*=": OP_MULT, "/=": OP_DIV,
+    "//=": OP_FLOOR_DIV, "%=": OP_MOD, "**=": OP_POW,
+    "&=": OP_BIT_AND, "|=": OP_BIT_OR, "^=": OP_BIT_XOR,
+    "<<=": OP_LSHIFT, ">>=": OP_RSHIFT, "@=": OP_MAT_MULT,
+}
+
+
+# =================================================================
+# SECTION 5: Parser Class
+# =================================================================
+
+class MMCParser:
+    """Self-hosted MMC Parser.
+
+    Parses a token stream (from mmc_lexer.mmc) into an AST.
+    The AST uses dict nodes with "type" fields matching mmc_codegen.mmc constants.
+
+    Pipeline:
+        mmc_lexer.mmc -> Token[] -> MMCParser -> AST -> mmc_codegen.mmc
+    """
+
+    def __init__(self, tokens=None):
+        self.tokens = tokens or []
+        self.pos = 0
+        self.errors = []
+
+    def parse(self, tokens=None):
+        """Parse a list of token dicts into an AST.
+
+        Args:
+            tokens: List of token dicts from mmc_lexer.mmc.
+
+        Returns:
+            AST dict: {"type": "Program", "body": [statement_nodes...]}
+        """
+        if tokens is not None:
+            self.tokens = tokens
+        self.pos = 0
+        self.errors = []
+
+        body = self._parse_body(top_level=True)
+
+        return {"type": NODE_PROGRAM, "body": body}
+
+    # -----------------------------------------------------------
+    # Token Navigation
+    # -----------------------------------------------------------
+
+    def _cur(self):
+        """Current token."""
+        if self.pos < len(self.tokens):
+            return self.tokens[self.pos]
+        return {"type": "EOF", "value": "", "line": -1, "col": -1}
+
+    def _peek(self, offset=1):
+        """Look ahead."""
+        idx = self.pos + offset
+        if idx < len(self.tokens):
+            return self.tokens[idx]
+        return {"type": "EOF", "value": "", "line": -1, "col": -1}
+
+    def _advance(self):
+        """Consume and return current token."""
+        tok = self._cur()
+        self.pos += 1
+        return tok
+
+    def _match_type(self, ttype):
+        """Check if current token has given type."""
+        return self._cur()["type"] == ttype
+
+    def _match_val(self, val):
+        """Check if current token has given value."""
+        return self._cur()["value"] == val
+
+    def _match_type_val(self, ttype, val):
+        """Check if current token matches type and value."""
+        t = self._cur()
+        return t["type"] == ttype and t["value"] == val
+
+    def _expect_val(self, val):
+        """Consume token expecting specific value. Reports error but continues."""
+        tok = self._cur()
+        if tok["value"] != val:
+            self.errors.append("Expected %r at line %d but got %r" % (val, tok["line"], tok["value"]))
+            # Don't consume — let the caller decide
+            return tok
+        return self._advance()
+
+    def _expect_op(self, val):
+        """Consume operator token expecting specific value."""
+        return self._expect_val(val)
+
+    def _is_stmt_kw(self, val):
+        """Check if value is a statement keyword."""
+        return val in STMT_MAP
+
+    def _stmt_kw(self, val):
+        """Get Python keyword for a Myanmar/English statement keyword."""
+        return STMT_MAP.get(val, val)
+
+    def _skip_newlines(self):
+        """Skip NEWLINE tokens."""
+        while self._cur()["type"] == "NEWLINE":
+            self._advance()
+
+    def _skip_newlines_and_comments(self):
+        """Skip NEWLINE and COMMENT tokens."""
+        while self._cur()["type"] in ("NEWLINE", "COMMENT"):
+            self._advance()
+
+    # -----------------------------------------------------------
+    # Statement Parsing
+    # -----------------------------------------------------------
+
+    def _parse_body(self, top_level=False):
+        """Parse a sequence of statements until dedent or EOF."""
+        stmts = []
+        self._skip_newlines()
+
+        while True:
+            tok = self._cur()
+
+            # Stop conditions
+            if tok["type"] == "EOF":
+                break
+            if tok["type"] == "DEDENT" and not top_level:
+                self._advance()
+                break
+
+            # Skip comments and empty lines
+            if tok["type"] in ("NEWLINE", "COMMENT"):
+                self._advance()
+                continue
+            if tok["type"] == "INDENT":
+                self._advance()
+                continue
+
+            # Parse a statement
+            stmt = self._parse_statement()
+            if stmt is not None:
+                stmts.append(stmt)
+
+            self._skip_newlines()
+
+        return stmts
+
+    def _parse_statement(self):
+        """Parse a single statement."""
+        tok = self._cur()
+
+        # Skip variable declaration prefixes
+        if tok["type"] == "WORD" and tok["value"] in SKIP_PREFIXES:
+            self._advance()
+
+        tok = self._cur()
+
+        # IA call: IA.method(args) or keyword_variant.method(args)
+        if tok["type"] == "IA":
+            return self._parse_ia_statement()
+
+        # Statement keywords
+        if tok["type"] == "WORD":
+            kw = self._stmt_kw(tok["value"])
+
+            if kw == "if":
+                return self._parse_if()
+            if kw == "for":
+                return self._parse_for()
+            if kw == "while":
+                return self._parse_while()
+            if kw == "def":
+                return self._parse_function_def()
+            if kw == "class":
+                return self._parse_class_def()
+            if kw == "return":
+                return self._parse_return()
+            if kw == "import":
+                return self._parse_import()
+            if kw == "from":
+                return self._parse_import_from()
+            if kw == "try":
+                return self._parse_try()
+            if kw == "raise":
+                return self._parse_raise()
+            if kw == "assert":
+                return self._parse_assert()
+            if kw == "global":
+                return self._parse_global()
+            if kw == "nonlocal":
+                return self._parse_nonlocal()
+            if kw == "del":
+                return self._parse_delete()
+            if kw == "break":
+                self._advance()
+                self._skip_to_newline()
+                return {"type": NODE_BREAK}
+            if kw == "continue":
+                self._advance()
+                self._skip_to_newline()
+                return {"type": NODE_CONTINUE}
+            if kw == "pass":
+                self._advance()
+                self._skip_to_newline()
+                return {"type": NODE_PASS}
+            if kw == "with":
+                return self._parse_with()
+            if kw == "match":
+                return self._parse_match()
+            if kw == "yield":
+                return self._parse_yield()
+            if kw == "async":
+                return self._parse_async_statement()
+            if kw == "@":  # Decorator
+                return self._parse_decorated()
+
+        # Expression statement
+        return self._parse_expr_statement()
+
+    def _skip_to_newline(self):
+        """Skip tokens until newline."""
+        while self._cur()["type"] not in ("NEWLINE", "EOF", "DEDENT"):
+            self._advance()
+
+    def _parse_if(self):
+        """Parse if/elif/else statement."""
+        self._advance()  # consume 'if' / 'အကယ်၍'
+        test = self._parse_expression()
+        self._expect_op(":")
+        body = self._parse_body()
+        self._skip_newlines()
+
+        orelse = []
+        tok = self._cur()
+        if tok["type"] == "WORD":
+            kw = self._stmt_kw(tok["value"])
+            if kw == "else":
+                self._advance()  # consume 'else'
+                self._expect_op(":")
+                orelse = self._parse_body()
+                self._skip_newlines()
+            elif kw == "elif":
+                # elif -> nested If node
+                elif_node = self._parse_if()
+                orelse = [elif_node]
+
+        return {"type": NODE_IF, "test": test, "body": body, "orelse": orelse}
+
+    def _parse_for(self):
+        """Parse for loop.
+
+        MMC for loop syntax supports:
+          အတွက် i ထဲတွင် ပတ်လမ်း(၅):    (explicit 'in')
+          အတွက် i ပတ်လမ်း(၅):         (implicit 'in' before range call)
+          for i in range(5):              (English)
+        """
+        self._advance()  # consume 'for' / 'အတွက်'
+        target = self._parse_expression()
+
+        # Handle 'in' keyword (both English and Myanmar)
+        cur = self._cur()
+        if cur["type"] == "WORD" and cur["value"] in ("in", "ထဲတွင်"):
+            self._advance()  # consume 'in'
+            iter_expr = self._parse_expression()
+        else:
+            # Implicit 'in' — the next token IS the iterator expression
+            # Common pattern: အတွက် i ပတ်လမ်း(၅): (for i range(5):)
+            # We parse it as a call expression and wrap with range() if needed
+            iter_expr = self._parse_expression()
+
+        self._expect_op(":")
+        body = self._parse_body()
+        self._skip_newlines()
+
+        orelse = []
+        tok = self._cur()
+        if tok["type"] == "WORD" and self._stmt_kw(tok["value"]) == "else":
+            self._advance()
+            self._expect_op(":")
+            orelse = self._parse_body()
+
+        return {"type": NODE_FOR, "target": target, "iter": iter_expr,
+                "body": body, "orelse": orelse, "async": 0}
+
+    def _parse_while(self):
+        """Parse while loop."""
+        self._advance()  # consume 'while' / 'လုပ်နေစဉ်'
+        test = self._parse_expression()
+        self._expect_op(":")
+        body = self._parse_body()
+        self._skip_newlines()
+
+        return {"type": NODE_WHILE, "test": test, "body": body, "orelse": []}
+
+    def _parse_function_def(self):
+        """Parse function definition."""
+        self._advance()  # consume 'def' / 'အဓိပ္ပာယ်'
+        name_tok = self._advance()  # function name
+        name = name_tok["value"]
+
+        self._expect_op("(")
+        params = self._parse_params()
+        self._expect_op(")")
+
+        return_type = None
+        if self._cur()["type"] == "OP" and self._cur()["value"] == "->":
+            self._advance()  # consume '->'
+            return_type = self._parse_expression()
+
+        self._expect_op(":")
+        body = self._parse_body()
+
+        return {"type": NODE_FUNCTION_DEF, "name": name, "params": params,
+                "return_type": return_type, "body": body, "async": 0}
+
+    def _parse_params(self):
+        """Parse function parameter list."""
+        params = []
+
+        while not (self._cur()["type"] == "OP" and self._cur()["value"] == ")"):
+            if len(params) > 0:
+                self._expect_op(",")
+
+            # Check for *args or **kwargs
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "**":
+                self._advance()
+                name = self._advance()["value"]
+                params.append({"name": name, "annotation": None, "default": None, "star": 2})
+                continue
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "*":
+                self._advance()
+                name = self._advance()["value"]
+                params.append({"name": name, "annotation": None, "default": None, "star": 1})
+                continue
+
+            name = self._advance()["value"]
+            annotation = None
+            default = None
+
+            # Type annotation: name: type
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ":":
+                self._advance()
+                annotation = self._parse_annotation()
+
+            # Default value: name = value
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "=":
+                self._advance()
+                default = self._parse_expression()
+
+            params.append({"name": name, "annotation": annotation, "default": default, "star": 0})
+
+        return params
+
+    def _parse_annotation(self):
+        """Parse a type annotation expression."""
+        return self._parse_atom()
+
+    def _parse_class_def(self):
+        """Parse class definition."""
+        self._advance()  # consume 'class' / 'အတန်း'
+        name = self._advance()["value"]
+
+        bases = []
+        if self._cur()["type"] == "OP" and self._cur()["value"] == "(":
+            self._advance()
+            while not (self._cur()["type"] == "OP" and self._cur()["value"] == ")"):
+                if len(bases) > 0:
+                    self._expect_op(",")
+                bases.append(self._parse_expression())
+            self._advance()  # consume ')'
+
+        self._expect_op(":")
+        body = self._parse_body()
+
+        return {"type": NODE_CLASS_DEF, "name": name, "bases": bases, "body": body}
+
+    def _parse_return(self):
+        """Parse return statement."""
+        self._advance()  # consume 'return' / 'ပြန်ပေး'
+        value = None
+        tok = self._cur()
+        if tok["type"] not in ("NEWLINE", "EOF", "DEDENT"):
+            value = self._parse_expression()
+        self._skip_to_newline()
+        return {"type": NODE_RETURN, "value": value}
+
+    def _parse_import(self):
+        """Parse import statement."""
+        self._advance()  # consume 'import' / 'တင်သွင်း'
+        names = []
+        while True:
+            name = self._advance()["value"]
+            asname = None
+            if self._cur()["type"] == "WORD" and self._cur()["value"] in ("as", "အဖြစ်"):
+                self._advance()
+                asname = self._advance()["value"]
+            names.append({"name": name, "asname": asname})
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                self._advance()
+            else:
+                break
+        self._skip_to_newline()
+        return {"type": NODE_IMPORT, "names": names}
+
+    def _parse_import_from(self):
+        """Parse from ... import ... statement."""
+        self._advance()  # consume 'from' / 'မှ'
+        module = self._advance()["value"]
+        self._expect_val("import")
+        self._expect_val("တင်သွင်း")
+        names = []
+        while True:
+            name = self._advance()["value"]
+            asname = None
+            if self._cur()["type"] == "WORD" and self._cur()["value"] in ("as", "အဖြစ်"):
+                self._advance()
+                asname = self._advance()["value"]
+            names.append({"name": name, "asname": asname})
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                self._advance()
+            else:
+                break
+        self._skip_to_newline()
+        return {"type": NODE_IMPORT_FROM, "module": module, "names": names}
+
+    def _parse_try(self):
+        """Parse try/except/else/finally statement."""
+        self._advance()  # consume 'try' / 'ကြိုးစား'
+        self._expect_op(":")
+        body = self._parse_body()
+
+        handlers = []
+        while self._cur()["type"] == "WORD" and self._stmt_kw(self._cur()["value"]) == "except":
+            self._advance()  # consume 'except'
+            exc_type = None
+            exc_name = None
+
+            # Exception type
+            if self._cur()["type"] not in ("OP", "NEWLINE", "EOF", "DEDENT") and self._cur()["value"] != ":":
+                exc_type = self._parse_atom()
+
+            # as name
+            if self._cur()["type"] == "WORD" and self._cur()["value"] in ("as", "အဖြစ်"):
+                self._advance()
+                exc_name = self._advance()["value"]
+
+            self._expect_op(":")
+            handler_body = self._parse_body()
+            handlers.append({"exc_type": exc_type, "name": exc_name, "body": handler_body})
+
+        orelse = []
+        if self._cur()["type"] == "WORD" and self._stmt_kw(self._cur()["value"]) == "else":
+            self._advance()
+            self._expect_op(":")
+            orelse = self._parse_body()
+
+        finalbody = []
+        if self._cur()["type"] == "WORD" and self._stmt_kw(self._cur()["value"]) == "finally":
+            self._advance()
+            self._expect_op(":")
+            finalbody = self._parse_body()
+
+        return {"type": NODE_TRY, "body": body, "handlers": handlers,
+                "orelse": orelse, "finalbody": finalbody}
+
+    def _parse_raise(self):
+        """Parse raise statement."""
+        self._advance()  # consume 'raise' / 'ချမြှောက်'
+        exc = None
+        cause = None
+        if self._cur()["type"] not in ("NEWLINE", "EOF", "DEDENT"):
+            exc = self._parse_expression()
+            if self._cur()["type"] == "WORD" and self._cur()["value"] == "from":
+                self._advance()
+                cause = self._parse_expression()
+        self._skip_to_newline()
+        return {"type": NODE_RAISE, "exc": exc, "cause": cause}
+
+    def _parse_assert(self):
+        """Parse assert statement."""
+        self._advance()  # consume 'assert'
+        test = self._parse_expression()
+        msg = None
+        if self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+            self._advance()
+            msg = self._parse_expression()
+        self._skip_to_newline()
+        return {"type": NODE_ASSERT, "test": test, "msg": msg}
+
+    def _parse_global(self):
+        """Parse global statement."""
+        self._advance()  # consume 'global' / 'ကြွင်းလဲ'
+        names = []
+        while self._cur()["type"] == "WORD" and self._cur()["value"] not in STMT_MAP:
+            names.append(self._advance()["value"])
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                self._advance()
+            else:
+                break
+        self._skip_to_newline()
+        return {"type": NODE_GLOBAL, "names": names}
+
+    def _parse_nonlocal(self):
+        """Parse nonlocal statement."""
+        self._advance()  # consume 'nonlocal' / 'ဒေသခံ'
+        names = []
+        while self._cur()["type"] == "WORD" and self._cur()["value"] not in STMT_MAP:
+            names.append(self._advance()["value"])
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                self._advance()
+            else:
+                break
+        self._skip_to_newline()
+        return {"type": NODE_NONLOCAL, "names": names}
+
+    def _parse_delete(self):
+        """Parse del statement."""
+        self._advance()  # consume 'del' / 'ဖျက်ပါ'
+        targets = []
+        while True:
+            targets.append(self._parse_expression())
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                self._advance()
+            else:
+                break
+        self._skip_to_newline()
+        return {"type": NODE_DELETE, "targets": targets}
+
+    def _parse_with(self):
+        """Parse with statement."""
+        self._advance()  # consume 'with'
+        items = []
+        while True:
+            ctx_expr = self._parse_expression()
+            opt_var = None
+            if self._cur()["type"] == "WORD" and self._cur()["value"] in ("as", "အဖြစ်"):
+                self._advance()
+                opt_var = self._advance()["value"]
+            items.append({"context_expr": ctx_expr, "optional_vars": opt_var})
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                self._advance()
+            else:
+                break
+        self._expect_op(":")
+        body = self._parse_body()
+        return {"type": NODE_WITH, "items": items, "body": body, "async": 0}
+
+    def _parse_match(self):
+        """Parse match/case statement."""
+        self._advance()  # consume 'match'
+        subject = self._parse_expression()
+        self._expect_op(":")
+
+        cases = []
+        while self._cur()["type"] == "WORD" and self._cur()["value"] in ("case",):
+            self._advance()  # consume 'case'
+            pattern = self._parse_expression()
+            guard = None
+            if self._cur()["type"] == "WORD" and self._cur()["value"] == "if":
+                self._advance()
+                guard = self._parse_expression()
+            self._expect_op(":")
+            case_body = self._parse_body()
+            cases.append({"pattern": pattern, "guard": guard, "body": case_body})
+
+        return {"type": NODE_MATCH, "subject": subject, "cases": cases}
+
+    def _parse_yield(self):
+        """Parse yield / yield from statement."""
+        tok = self._cur()
+        if tok["value"] == "yield":
+            self._advance()
+            # Check for 'yield from'
+            if self._cur()["type"] == "WORD" and self._cur()["value"] == "from":
+                self._advance()
+                value = self._parse_expression()
+                self._skip_to_newline()
+                return {"type": NODE_YIELD_FROM, "value": value}
+            # Plain yield
+            value = None
+            if self._cur()["type"] not in ("NEWLINE", "EOF", "DEDENT"):
+                value = self._parse_expression()
+            self._skip_to_newline()
+            return {"type": NODE_YIELD, "value": value}
+
+        return self._parse_expr_statement()
+
+    def _parse_async_statement(self):
+        """Parse async def / async for / async with."""
+        self._advance()  # consume 'async'
+        tok = self._cur()
+
+        if tok["type"] == "WORD":
+            kw = self._stmt_kw(tok["value"])
+            if kw == "def":
+                node = self._parse_function_def()
+                node["async"] = 1
+                return node
+            if kw == "for":
+                node = self._parse_for()
+                node["async"] = 1
+                return node
+            if kw == "with":
+                node = self._parse_with()
+                node["async"] = 1
+                return node
+
+        return self._parse_expr_statement()
+
+    def _parse_decorated(self):
+        """Parse decorated definition (@decorator)."""
+        self._advance()  # consume '@'
+        # For simplicity, treat decorators as part of function/class
+        # This is a simplified implementation
+        return self._parse_expr_statement()
+
+    # -----------------------------------------------------------
+    # IA Statement Parsing
+    # -----------------------------------------------------------
+
+    def _parse_ia_statement(self):
+        """Parse IA call statement: IA.method(args)
+
+        Handles all 4 IA keyword variants.
+        Creates IACall AST node for mmc_codegen.mmc.
+        """
+        self._advance()  # consume IA keyword
+
+        # Expect dot after IA keyword
+        if self._cur()["type"] == "OP" and self._cur()["value"] == ".":
+            self._advance()  # consume '.'
+
+            method_tok = self._advance()
+            method_raw = method_tok["value"]
+
+            # Translate Myanmar method to English
+            method = IA_METHOD_MAP.get(method_raw, method_raw)
+
+            # Parse arguments
+            args = []
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "(":
+                self._advance()  # consume '('
+                while not (self._cur()["type"] == "OP" and self._cur()["value"] == ")"):
+                    if len(args) > 0:
+                        self._expect_op(",")
+                    args.append(self._parse_expression())
+                self._advance()  # consume ')'
+
+            self._skip_to_newline()
+            return {"type": NODE_IA_CALL, "method": method, "args": args}
+
+        # IA used as value without method call (rare but valid)
+        self._skip_to_newline()
+        return {"type": NODE_IA_CALL, "method": "say", "args": []}
+
+    # -----------------------------------------------------------
+    # Expression Statement Parsing
+    # -----------------------------------------------------------
+
+    def _parse_expr_statement(self):
+        """Parse expression as statement."""
+        expr = self._parse_expression()
+
+        # Check for augmented assignment: target op= value
+        if self._cur()["type"] == "OP" and self._cur()["value"] in AUG_ASSIGN_OPS:
+            op_str = self._advance()["value"]
+            value = self._parse_expression()
+            self._skip_to_newline()
+            return {"type": NODE_AUG_ASSIGN, "target": expr,
+                    "op": AUG_ASSIGN_MAP.get(op_str, OP_ADD), "value": value}
+
+        # Check for assignment: target = value
+        if self._cur()["type"] == "OP" and self._cur()["value"] == "=":
+            self._advance()  # consume '='
+
+            # Check it's not '==' (comparison)
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "=":
+                # This was actually ==, backtrack
+                self.pos -= 1
+                self._skip_to_newline()
+                return {"type": NODE_EXPR_STMT, "value": expr}
+
+            value = self._parse_expression()
+
+            # Check for annotation: target: type = value
+            # (handled in assignment context)
+
+            self._skip_to_newline()
+            return {"type": NODE_ASSIGN, "targets": [expr], "value": value}
+
+        # Check for type annotation: name: type
+        if self._cur()["type"] == "OP" and self._cur()["value"] == ":":
+            self._advance()  # consume ':'
+            annotation = self._parse_annotation()
+            value = None
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "=":
+                self._advance()
+                value = self._parse_expression()
+            self._skip_to_newline()
+            return {"type": NODE_ANN_ASSIGN, "target": expr, "annotation": annotation, "value": value}
+
+        self._skip_to_newline()
+        return {"type": NODE_EXPR_STMT, "value": expr}
+
+    # -----------------------------------------------------------
+    # Expression Parsing (Recursive Descent)
+    # -----------------------------------------------------------
+
+    def _parse_expression(self):
+        """Parse a full expression with operator precedence.
+
+        Uses precedence climbing algorithm for binary operators.
+        Recursion pattern (Riley Goodside's principle):
+            Each level recurses into the next higher precedence level.
+            Lowest: or -> and -> not -> comparison -> bitwise -> additive -> multiplicative -> power -> unary -> atom
+        """
+        return self._parse_ternary()
+
+    def _parse_ternary(self):
+        """Parse ternary expression: value if test else alt."""
+        expr = self._parse_or()
+
+        if self._cur()["type"] == "WORD" and self._cur()["value"] in ("if", "အကယ်၍"):
+            # But only if this is inline (not start of if-statement)
+            # Heuristic: if there's already content before this 'if', it's ternary
+            # We use lookahead: if next meaningful token is not ':', it's ternary
+            saved_pos = self.pos
+            self._advance()  # consume 'if'
+            test = self._parse_or()
+            if self._cur()["type"] == "WORD" and self._cur()["value"] in ("else", "မဟုတ်ပါက"):
+                self._advance()  # consume 'else'
+                orelse = self._parse_ternary()
+                return {"type": NODE_IF_EXPR, "test": test, "body": expr, "orelse": orelse}
+            else:
+                # Not a ternary, backtrack
+                self.pos = saved_pos
+
+        return expr
+
+    def _parse_or(self):
+        """Parse 'or' expressions."""
+        left = self._parse_and()
+
+        while (self._cur()["type"] == "WORD" and self._cur()["value"] in ("or", "သို့မဟုတ်")) or \
+              (self._cur()["type"] == "OP" and self._cur()["value"] == "||"):
+            self._advance()
+            right = self._parse_and()
+            left = {"type": NODE_BOOL_OP, "op": OP_OR, "values": [left, right]}
+
+        return left
+
+    def _parse_and(self):
+        """Parse 'and' expressions."""
+        left = self._parse_not()
+
+        while (self._cur()["type"] == "WORD" and self._cur()["value"] in ("and", "ညီမျှလျှင်")) or \
+              (self._cur()["type"] == "OP" and self._cur()["value"] == "&&"):
+            self._advance()
+            right = self._parse_not()
+            left = {"type": NODE_BOOL_OP, "op": OP_AND, "values": [left, right]}
+
+        return left
+
+    def _parse_not(self):
+        """Parse 'not' unary expression."""
+        if self._cur()["type"] == "WORD" and self._cur()["value"] in ("not", "မဟုတ်"):
+            self._advance()
+            operand = self._parse_not()
+            return {"type": NODE_UNARY_OP, "op": OP_NOT, "operand": operand}
+        return self._parse_comparison()
+
+    def _parse_comparison(self):
+        """Parse comparison expressions: a == b, a < b, a is b, etc."""
+        left = self._parse_bitwise_or()
+
+        ops = []
+        comparators = []
+
+        while True:
+            tok = self._cur()
+
+            # Check for comparison operators
+            if tok["type"] == "OP" and tok["value"] in ("<=", ">=", "==", "!=", "<", ">"):
+                op_str = tok["value"]
+                op_const = OP_SYMBOL_MAP.get(op_str, op_str)
+                self._advance()
+                right = self._parse_bitwise_or()
+                ops.append(op_const)
+                comparators.append(right)
+            elif tok["type"] == "WORD" and tok["value"] in ("is", "is not", "in", "not in"):
+                op_str = tok["value"]
+                op_const = OP_SYMBOL_MAP.get(op_str, op_str)
+                self._advance()
+                # Handle "is not" and "not in" (two-word operators)
+                if self._cur()["type"] == "WORD" and self._cur()["value"] in ("not", "in") and op_str in ("is", "not"):
+                    two_word = op_str + " " + self._cur()["value"]
+                    if two_word in OP_SYMBOL_MAP:
+                        self._advance()
+                        op_str = two_word
+                        op_const = OP_SYMBOL_MAP[op_str]
+                right = self._parse_bitwise_or()
+                ops.append(op_const)
+                comparators.append(right)
+            else:
+                break
+
+        if len(ops) == 0:
+            return left
+
+        return {"type": NODE_COMPARE, "left": left, "ops": ops, "comparators": comparators}
+
+    def _parse_bitwise_or(self):
+        """Parse bitwise OR: a | b."""
+        left = self._parse_bitwise_xor()
+
+        while self._cur()["type"] == "OP" and self._cur()["value"] == "|":
+            self._advance()
+            right = self._parse_bitwise_xor()
+            left = {"type": NODE_BIN_OP, "left": left, "op": OP_BIT_OR, "right": right}
+
+        return left
+
+    def _parse_bitwise_xor(self):
+        """Parse bitwise XOR: a ^ b."""
+        left = self._parse_bitwise_and()
+
+        while self._cur()["type"] == "OP" and self._cur()["value"] == "^":
+            self._advance()
+            right = self._parse_bitwise_and()
+            left = {"type": NODE_BIN_OP, "left": left, "op": OP_BIT_XOR, "right": right}
+
+        return left
+
+    def _parse_bitwise_and(self):
+        """Parse bitwise AND: a & b."""
+        left = self._parse_shift()
+
+        while self._cur()["type"] == "OP" and self._cur()["value"] == "&":
+            self._advance()
+            right = self._parse_shift()
+            left = {"type": NODE_BIN_OP, "left": left, "op": OP_BIT_AND, "right": right}
+
+        return left
+
+    def _parse_shift(self):
+        """Parse shift operations: a << b, a >> b."""
+        left = self._parse_additive()
+
+        while self._cur()["type"] == "OP" and self._cur()["value"] in ("<<", ">>"):
+            op_str = self._advance()["value"]
+            op_const = OP_SYMBOL_MAP.get(op_str, op_str)
+            right = self._parse_additive()
+            left = {"type": NODE_BIN_OP, "left": left, "op": op_const, "right": right}
+
+        return left
+
+    def _parse_additive(self):
+        """Parse additive operations: a + b, a - b."""
+        left = self._parse_multiplicative()
+
+        while self._cur()["type"] == "OP" and self._cur()["value"] in ("+", "-"):
+            op_str = self._advance()["value"]
+            op_const = OP_SYMBOL_MAP.get(op_str, op_str)
+            right = self._parse_multiplicative()
+            left = {"type": NODE_BIN_OP, "left": left, "op": op_const, "right": right}
+
+        return left
+
+    def _parse_multiplicative(self):
+        """Parse multiplicative operations: a * b, a / b, a // b, a % b."""
+        left = self._parse_power()
+
+        while self._cur()["type"] == "OP" and self._cur()["value"] in ("*", "/", "//", "%"):
+            op_str = self._advance()["value"]
+            op_const = OP_SYMBOL_MAP.get(op_str, op_str)
+            right = self._parse_power()
+            left = {"type": NODE_BIN_OP, "left": left, "op": op_const, "right": right}
+
+        return left
+
+    def _parse_power(self):
+        """Parse power operation: a ** b."""
+        left = self._parse_unary()
+
+        if self._cur()["type"] == "OP" and self._cur()["value"] == "**":
+            self._advance()
+            right = self._parse_unary()  # Right-associative
+            return {"type": NODE_BIN_OP, "left": left, "op": OP_POW, "right": right}
+
+        # Matmul: a @ b
+        if self._cur()["type"] == "OP" and self._cur()["value"] == "@":
+            self._advance()
+            right = self._parse_unary()
+            return {"type": NODE_BIN_OP, "left": left, "op": OP_MAT_MULT, "right": right}
+
+        return left
+
+    def _parse_unary(self):
+        """Parse unary operations: -a, +a, ~a."""
+        tok = self._cur()
+
+        if tok["type"] == "OP" and tok["value"] == "-":
+            self._advance()
+            operand = self._parse_unary()
+            return {"type": NODE_UNARY_OP, "op": OP_USUB, "operand": operand}
+
+        if tok["type"] == "OP" and tok["value"] == "+":
+            self._advance()
+            operand = self._parse_unary()
+            return {"type": NODE_UNARY_OP, "op": OP_UADD, "operand": operand}
+
+        if tok["type"] == "OP" and tok["value"] == "~":
+            self._advance()
+            operand = self._parse_unary()
+            return {"type": NODE_UNARY_OP, "op": OP_INVERT, "operand": operand}
+
+        # Starred expression: *args
+        if tok["type"] == "OP" and tok["value"] == "*":
+            self._advance()
+            value = self._parse_unary()
+            return {"type": NODE_STARRED, "value": value}
+
+        return self._parse_postfix()
+
+    def _parse_postfix(self):
+        """Parse postfix operations: function calls, attribute access, subscripts."""
+        expr = self._parse_atom()
+
+        while True:
+            tok = self._cur()
+
+            # Function call: expr(args)
+            if tok["type"] == "OP" and tok["value"] == "(":
+                self._advance()  # consume '('
+                args = []
+                keywords = []
+                while not (self._cur()["type"] == "OP" and self._cur()["value"] == ")"):
+                    if len(args) > 0 or len(keywords) > 0:
+                        self._expect_op(",")
+
+                    # Check for keyword argument: name=value
+                    # Heuristic: if we see WORD followed by =, it's a kwarg
+                    if self._cur()["type"] == "WORD" and self._peek()["type"] == "OP" and self._peek()["value"] == "=":
+                        kw_name = self._advance()["value"]
+                        self._advance()  # consume '='
+                        kw_value = self._parse_expression()
+                        keywords.append({"arg": kw_name, "value": kw_value})
+                    else:
+                        args.append(self._parse_expression())
+
+                self._advance()  # consume ')'
+                expr = {"type": NODE_CALL, "func": expr, "args": args, "keywords": keywords}
+
+            # Attribute access: expr.attr
+            elif tok["type"] == "OP" and tok["value"] == ".":
+                self._advance()  # consume '.'
+                attr_tok = self._advance()
+                attr_name = attr_tok["value"]
+                # Translate Myanmar method names
+                if attr_name in METHOD_MAP:
+                    attr_name = METHOD_MAP[attr_name]
+                expr = {"type": NODE_ATTRIBUTE, "value": expr, "attr": attr_name}
+
+            # Subscript: expr[index]
+            elif tok["type"] == "OP" and tok["value"] == "[":
+                self._advance()  # consume '['
+
+                # Check for slice: [start:end:step]
+                slice_node = self._parse_slice_or_index()
+                expr = {"type": NODE_SUBSCRIPT, "value": expr, "slice": slice_node}
+
+                self._expect_op("]")
+
+            else:
+                break
+
+        return expr
+
+    def _parse_slice_or_index(self):
+        """Parse slice or index inside brackets."""
+        lower = None
+        upper = None
+        step = None
+
+        # Check for : at start ([:expr])
+        if self._cur()["type"] == "OP" and self._cur()["value"] == ":":
+            lower = None
+        else:
+            lower = self._parse_expression()
+
+        if self._cur()["type"] == "OP" and self._cur()["value"] == ":":
+            self._advance()  # consume ':'
+            # It's a slice
+            if self._cur()["type"] != "OP" or self._cur()["value"] not in ("]", ":"):
+                upper = self._parse_expression()
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ":":
+                self._advance()  # consume second ':'
+                if self._cur()["type"] != "OP" or self._cur()["value"] != "]":
+                    step = self._parse_expression()
+            return {"type": NODE_SLICE, "lower": lower, "upper": upper, "step": step}
+
+        return lower
+
+    def _parse_atom(self):
+        """Parse atomic expression: literals, identifiers, grouped expressions."""
+        tok = self._cur()
+
+        # Parenthesized expression or tuple
+        if tok["type"] == "OP" and tok["value"] == "(":
+            self._advance()  # consume '('
+
+            # Empty tuple
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ")":
+                self._advance()
+                return {"type": NODE_TUPLE, "elts": []}
+
+            # Check for generator expression or comprehension
+            expr = self._parse_expression()
+
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                # Tuple
+                elts = [expr]
+                while self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                    self._advance()
+                    if self._cur()["type"] == "OP" and self._cur()["value"] == ")":
+                        break
+                    elts.append(self._parse_expression())
+                self._advance()  # consume ')'
+                return {"type": NODE_TUPLE, "elts": elts}
+
+            self._advance()  # consume ')'
+            return expr
+
+        # List literal or comprehension
+        if tok["type"] == "OP" and tok["value"] == "[":
+            self._advance()  # consume '['
+
+            # Empty list
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "]":
+                self._advance()
+                return {"type": NODE_LIST, "elts": []}
+
+            first = self._parse_expression()
+            elts = [first]
+
+            while self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                self._advance()
+                if self._cur()["type"] == "OP" and self._cur()["value"] == "]":
+                    break
+                elts.append(self._parse_expression())
+
+            self._advance()  # consume ']'
+            return {"type": NODE_LIST, "elts": elts}
+
+        # Dict literal or set literal
+        if tok["type"] == "OP" and tok["value"] == "{":
+            self._advance()  # consume '{'
+
+            # Empty dict
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "}":
+                self._advance()
+                return {"type": NODE_DICT, "keys": [], "values": []}
+
+            first = self._parse_expression()
+
+            # Check if it's a dict (key: value) or set (value, value, ...)
+            if self._cur()["type"] == "OP" and self._cur()["value"] == ":":
+                # Dict
+                self._advance()  # consume ':'
+                first_val = self._parse_expression()
+                keys = [first]
+                values = [first_val]
+
+                while self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                    self._advance()
+                    if self._cur()["type"] == "OP" and self._cur()["value"] == "}":
+                        break
+                    keys.append(self._parse_expression())
+                    self._expect_op(":")
+                    values.append(self._parse_expression())
+
+                self._advance()  # consume '}'
+                return {"type": NODE_DICT, "keys": keys, "values": values}
+            else:
+                # Set
+                elts = [first]
+                while self._cur()["type"] == "OP" and self._cur()["value"] == ",":
+                    self._advance()
+                    if self._cur()["type"] == "OP" and self._cur()["value"] == "}":
+                        break
+                    elts.append(self._parse_expression())
+
+                self._advance()  # consume '}'
+                return {"type": NODE_SET, "elts": elts}
+
+        # Number literal
+        if tok["type"] == "NUMBER":
+            self._advance()
+            val = tok["value"]
+            if "." in val:
+                return {"type": NODE_CONSTANT, "value": float(val)}
+            return {"type": NODE_CONSTANT, "value": int(val)}
+
+        # String literal
+        if tok["type"] == "STRING":
+            self._advance()
+            return {"type": NODE_CONSTANT, "value": tok["value"]}
+
+        # f-string literal
+        if tok["type"] == "FSTRING":
+            self._advance()
+            return {"type": NODE_FSTRING, "value": tok["value"]}
+
+        # IA keyword (used as expression)
+        if tok["type"] == "IA":
+            return self._parse_ia_expression()
+
+        # Word (identifier, keyword, value)
+        if tok["type"] == "WORD":
+            # Value keywords: True, False, None
+            if tok["value"] in VALUE_MAP:
+                self._advance()
+                py_val = VALUE_MAP[tok["value"]]
+                if py_val == "True":
+                    return {"type": NODE_CONSTANT, "value": True}
+                if py_val == "False":
+                    return {"type": NODE_CONSTANT, "value": False}
+                if py_val == "None":
+                    return {"type": NODE_CONSTANT, "value": None}
+
+            # Skip prefixes
+            if tok["value"] in SKIP_PREFIXES:
+                self._advance()
+                return self._parse_atom()
+
+            # Lambda: lambda params: body
+            if tok["value"] == "lambda" or tok["value"] == "များလိုက်":
+                return self._parse_lambda()
+
+            # Regular identifier
+            self._advance()
+            return {"type": NODE_NAME, "id": tok["value"]}
+
+        # Fallback: try to create a constant from the token value
+        self._advance()
+        return {"type": NODE_CONSTANT, "value": tok["value"]}
+
+    def _parse_ia_expression(self):
+        """Parse IA keyword used as expression (e.g., in assignment)."""
+        self._advance()  # consume IA keyword
+
+        if self._cur()["type"] == "OP" and self._cur()["value"] == ".":
+            self._advance()  # consume '.'
+            method_tok = self._advance()
+            method_raw = method_tok["value"]
+            method = IA_METHOD_MAP.get(method_raw, method_raw)
+
+            args = []
+            if self._cur()["type"] == "OP" and self._cur()["value"] == "(":
+                self._advance()  # consume '('
+                while not (self._cur()["type"] == "OP" and self._cur()["value"] == ")"):
+                    if len(args) > 0:
+                        self._expect_op(",")
+                    args.append(self._parse_expression())
+                self._advance()  # consume ')'
+
+            return {"type": NODE_IA_CALL, "method": method, "args": args}
+
+        return {"type": NODE_NAME, "id": "__mmc_ai__"}
+
+    def _parse_lambda(self):
+        """Parse lambda expression: lambda params: body."""
+        self._advance()  # consume 'lambda' / 'များလိုက်'
+        params = []
+        while not (self._cur()["type"] == "OP" and self._cur()["value"] == ":"):
+            if len(params) > 0:
+                self._expect_op(",")
+            name = self._advance()["value"]
+            params.append({"name": name, "annotation": None, "default": None, "star": 0})
+
+        self._expect_op(":")
+        body = self._parse_expression()
+
+        return {"type": NODE_LAMBDA, "params": params, "body": body}
+
+    # -----------------------------------------------------------
+    # Public API
+    # -----------------------------------------------------------
+
+    def get_errors(self):
+        """Return list of parsing errors."""
+        return self.errors
+
+    def has_errors(self):
+        """Check if any parsing errors occurred."""
+        return len(self.errors) > 0
+
+
+# =================================================================
+# SECTION 6: Standalone Parse Function
+# =================================================================
+
+def parse(tokens):
+    """Parse a list of token dicts into an AST.
+
+    Convenience function that creates an MMCParser and parses the tokens.
+
+    Args:
+        tokens: List of token dicts from mmc_lexer.mmc.
+
+    Returns:
+        AST dict: {"type": "Program", "body": [statement_nodes...]}
+    """
+    parser = MMCParser(tokens)
+    return parser.parse(tokens)
