@@ -1,1 +1,587 @@
-... (paste code above) ...
+# ============================================================
+# MMC Sequential Alarm System v1.0
+# Phase 6.2 — 3-Agent Chain Reaction Alarm Architecture
+# Monitor Agent → Analyzer Agent → Responder Agent
+# ============================================================
+# Author: #TheBrainMaster #AMOMASTER #BrainMaster #Genius
+# Project: MyanOS MMC Compiler — Phase 6
+# Date: 2026-04-26
+# ============================================================
+
+# --- Module Declaration ---
+
+လုပ်ဆောင်ချက်:
+  ရည်ရွယ်ချက်: "3-Agent Sequential Alarm System"
+  စနစ်: "MMC Phase 6.2"
+  မူတည်ချက်: "Linux/ARM64/Android Terminal Environment"
+  နေ့ရက်: "2026-04-26"
+  ဓာတ်: "Chain Reaction Alarm Architecture က Hardware Diagnostic ရလဒ်များကို လက်ခံပြီး ဇုန်ဆုံးဖြတ်ခြင်း၊ အသံခံခြင်းနှင့် ဖြေတံချိန် ထုတ်ပြောင်းခြင်း လုပ်ဆောင်ချက်"
+
+စက်ရည်ခြင်း:
+  json ကို ဖော်ပြချင်လို့ json ကို အသုံးပြု။
+  subprocess ကို စက်ရည်ခြင်း (system command execution)။
+  time ကို နေ့အသက်တိုင်း timing နှင့် scheduling အတွက် အသုံးပြုသည်။
+  os ကို path နှင့် file system check အတွက် အသုံးပြုသည်။
+  re ကို log pattern matching အတွက် အသုံးပြုသည်။
+
+# ============================================================
+# SECTION 1: System Configuration & Thresholds
+# ============================================================
+
+ခန့်မှန်းမှုများ:
+  # --- Alert Severity Levels ---
+  severity_normal: "NORMAL"
+  severity_info: "INFO"
+  severity_warning: "WARNING"
+  severity_critical: "CRITICAL"
+  severity_emergency: "EMERGENCY"
+
+  # --- Agent Chain Timing ---
+  monitor_interval_sec: 60
+  analyzer_timeout_sec: 10
+  responder_timeout_sec: 15
+  chain_max_retries: 3
+
+  # --- Alert Suppression ---
+  alert_cooldown_sec: 300
+  max_alerts_per_hour: 20
+  alert_repeat_threshold: 3
+
+  # --- Hardware Thresholds (synced with hardware_diag) ---
+  cpu_temp_warning: 65
+  cpu_temp_critical: 80
+  battery_low: 20
+  battery_critical: 5
+  disk_usage_warning: 80
+  disk_usage_critical: 95
+  memory_usage_warning: 80
+  memory_usage_critical: 90
+  io_latency_warning_ms: 50
+  io_latency_critical_ms: 200
+
+  # --- Notification Channels ---
+  notify_sound: ကျန်
+  notify_vibrate: ကျန်
+  notify_log: ကျန်
+  notify_file: "/tmp/mmc_alarm_log.json"
+
+# ============================================================
+# SECTION 2: Monitor Agent — Hardware Data Collection
+# Periodically reads diagnostic data from hardware_diag output
+# ============================================================
+
+ဖြေ ဖိုင်_ဖတ်_ဒေတာ_ပွဲ(pipe_path="/tmp/mmc_diag_result.json"):
+  # Read diagnostic results from hardware diagnostic engine
+  ရလဒ်များ = {"status": "NO_DATA", "source": "none", "data": {}, "timestamp": ""}
+
+  လိုက်ရှိလား = os.path.exists(pipe_path)
+  နုတ်လိုက်ရှိလား:
+    ဖိုင်ကိုဖတ် = open(pipe_path, "r")
+    အတွေ့အကြုံ = ဖိုင်ကိုဖတ်.read()
+    ဖိုင်ကိုဖတ်.close()
+
+    နုတ် အတွေ့အကြုံ.strip():
+      သတ်မှတ်မှာ = json.loads(အတွေ့အကြုံ)
+      ရလဒ်များ = {
+        "status": "OK",
+        "source": pipe_path,
+        "data": သတ်မှတ်မှာ,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+      }
+  နုတ်မဟုတ်:
+    ရလဒ်များ["error"] = "Diagnostic pipe not found: " + pipe_path
+
+  ပြန်လည်ပေး = ရလဒ်များ
+
+ဖြေ စစ်_ကိုယ်သတ်မှတ်ချက်_စစ်ဆေးချက်(diag_data):
+  # Extract anomalies from diagnostic report
+  ကိုယ်သတ်မှတ်ချက်များ = []
+  သတိပေးချက် = ကျန်
+
+  # Check CPU temperature
+  cpu_အပူချိန် = diag_data.get("components", {}).get("cpu_temperature", [])
+  ပစ္စည်းတိုင်း(cpu_အပူချိန်):
+    နုတ် type(စစ်) == dict:
+      temp = စစ်.get("temp_celsius", 0)
+      status = စစ်.get("status", "NORMAL")
+      နုတ် status == "CRITICAL":
+        ကိုယ်သတ်မှတ်ချက်များ.append({
+          "component": "CPU Temperature",
+          "sensor": စစ်.get("sensor", "?"),
+          "value": temp,
+          "threshold": ခန့်မှန်းမှု.cpu_temp_critical,
+          "severity": "CRITICAL",
+          "message": "CPU temp " + str(temp) + "C exceeds critical threshold " + str(ခန့်မှန်းမှု.cpu_temp_critical) + "C"
+        })
+        သတိပေးချက် = ကျသလား
+      နုတ် status == "WARNING":
+        ကိုယ်သတ်မှတ်ချက်များ.append({
+          "component": "CPU Temperature",
+          "sensor": စစ်.get("sensor", "?"),
+          "value": temp,
+          "threshold": ခန့်မှန်းမှု.cpu_temp_warning,
+          "severity": "WARNING",
+          "message": "CPU temp " + str(temp) + "C exceeds warning threshold " + str(ခန့်မှန်းမှု.cpu_temp_warning) + "C"
+        })
+        သတိပေးချက် = ကျသလား
+
+  # Check Battery
+  ဘက်တိုင်း = diag_data.get("components", {}).get("battery", {})
+  နုတ် type(ဘက်တိုင်း) == dict:
+    level = ဘက်တိုင်း.get("level_percent", 100)
+    assessment = ဘက်တိုင်း.get("assessment", "NORMAL")
+    နုတ် assessment == "CRITICAL":
+      ကိုယ်သတ်မှတ်ချက်များ.append({
+        "component": "Battery",
+        "value": level,
+        "unit": "%",
+        "threshold": ခန့်မှန်းမှု.battery_critical,
+        "severity": "CRITICAL",
+        "message": "Battery at " + str(level) + "% — CRITICAL level!"
+      })
+      သတိပေးချက် = ကျသလား
+    နုတ် assessment == "WARNING":
+      ကိုယ်သတ်မှတ်ချက်များ.append({
+        "component": "Battery",
+        "value": level,
+        "unit": "%",
+        "threshold": ခန့်မှန်းမှု.battery_low,
+        "severity": "WARNING",
+        "message": "Battery at " + str(level) + "% — running low"
+      })
+      သတိပေးချက် = ကျသလား
+
+  # Check Storage
+  သို့မဟုတ် = diag_data.get("components", {}).get("storage", {})
+  နုတ် type(သို့မဟုတ်) == dict:
+    usage = သို့မဟုတ်.get("usage_percent", 0)
+    assessment = သို့မဟုတ်.get("assessment", "NORMAL")
+    နုတ် assessment == "CRITICAL":
+      ကိုယ်သတ်မှတ်ချက်များ.append({
+        "component": "Storage",
+        "value": usage,
+        "unit": "%",
+        "threshold": ခန့်မှန်းမှု.disk_usage_critical,
+        "severity": "CRITICAL",
+        "message": "Disk usage " + str(usage) + "% — CRITICAL!"
+      })
+      သတိပေးချက် = ကျသလား
+    နုတ် assessment == "WARNING":
+      ကိုယ်သတ်မှတ်ချက်များ.append({
+        "component": "Storage",
+        "value": usage,
+        "unit": "%",
+        "threshold": ခန့်မှန်းမှု.disk_usage_warning,
+        "severity": "WARNING",
+        "message": "Disk usage " + str(usage) + "% — getting full"
+      })
+      သတိပေးချက် = ကျသလား
+
+  # Check Memory
+  မှန်ကန် = diag_data.get("components", {}).get("memory", {})
+  နုတ် type(မှန်ကန်) == dict:
+    usage = မှန်ကန်.get("usage_percent", 0)
+    assessment = မှန်ကန်.get("assessment", "NORMAL")
+    နုတ် assessment == "CRITICAL":
+      ကိုယ်သတ်မှတ်ချက်များ.append({
+        "component": "Memory",
+        "value": usage,
+        "unit": "%",
+        "threshold": ခန့်မှန်းမှု.memory_usage_critical,
+        "severity": "CRITICAL",
+        "message": "Memory usage " + str(usage) + "% — CRITICAL!"
+      })
+      သတိပေးချက် = ကျသလား
+    နုတ် assessment == "WARNING":
+      ကိုယ်သတ်မှတ်ချက်များ.append({
+        "component": "Memory",
+        "value": usage,
+        "unit": "%",
+        "threshold": ခန့်မှန်းမှု.memory_usage_warning,
+        "severity": "WARNING",
+        "message": "Memory usage " + str(usage) + "% — high usage"
+      })
+      သတိပေးချက် = ကျသလား
+
+  # Check I/O
+  io = diag_data.get("components", {}).get("io_performance", {})
+  နုတ် type(io) == dict:
+    latency = io.get("avg_latency_ms", 0)
+    assessment = io.get("assessment", "NORMAL")
+    နုတ် assessment == "CRITICAL":
+      ကိုယ်သတ်မှတ်ချက်များ.append({
+        "component": "I/O Performance",
+        "value": latency,
+        "unit": "ms",
+        "threshold": ခန့်မှန်းမှု.io_latency_critical_ms,
+        "severity": "CRITICAL",
+        "message": "I/O latency " + str(latency) + "ms — CRITICAL slowdown!"
+      })
+      သတိပေးချက် = ကျသလား
+    နုတ် assessment == "WARNING":
+      ကိုယ်သတ်မှတ်ချက်များ.append({
+        "component": "I/O Performance",
+        "value": latency,
+        "unit": "ms",
+        "threshold": ခန့်မှန်းမှု.io_latency_warning_ms,
+        "severity": "WARNING",
+        "message": "I/O latency " + str(latency) + "ms — above normal"
+      })
+      သတိပေးချက် = ကျသလား
+
+  ရလဒ်များ = {
+    "anomaly_count": len(ကိုယ်သတ်မှတ်ချက်များ),
+    "has_alert": သတိပေးချက်,
+    "anomalies": ကိုယ်သတ်မှတ်ချက်များ,
+    "scan_time": time.strftime("%Y-%m-%d %H:%M:%S")
+  }
+
+  ပြန်လည်ပေး = ရလဒ်များ
+
+# ============================================================
+# SECTION 3: Analyzer Agent — Intelligence Assessment
+# Processes anomalies, correlates events, determines priority
+# ============================================================
+
+ဖြေ ဇုန်_ဆုံး_ဖြတ်ချက်(anomaly_report):
+  # Analyze anomaly patterns and produce severity assessment
+  အသင်းကိုယ်_စစ်ဆေးချက် = {
+    "priority": "LOW",
+    "risk_level": 0,
+    "recommendations": [],
+    "correlations": [],
+    "decision": "MONITOR"
+  }
+
+  ကိုယ်သတ်မှတ်ချက်များ = anomaly_report.get("anomalies", [])
+  အားလုံး_ကိုယ်သတ်မှတ်ချက် = anomaly_report.get("anomaly_count", 0)
+
+  နုတ် အားလုံး_ကိုယ်သတ်မှတ်ချက် == 0:
+    အသင်းကိုယ်_စစ်ဆေးချက်["decision"] = "NO_ACTION"
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("System nominal — no action required")
+    ပြန်လည်ပေး = အသင်းကိုယ်_စစ်ဆေးချက်
+
+  # Count severity levels
+  critical_count = 0
+  warning_count = 0
+  ပစ္စည်းတိုင်း(ကိုယ်သတ်မှတ်ချက်များ):
+    နုတ် ပစ္စည်း.get("severity") == "CRITICAL":
+      critical_count = critical_count + 1
+    နုတ် ပစ္စည်း.get("severity") == "WARNING":
+      warning_count = warning_count + 1
+
+  # Correlation analysis
+  စုစုပေါင်း = {}
+  ပစ္စည်းတိုင်း(ကိုယ်သတ်မှတ်ချက်များ):
+    comp = ပစ္စည်း.get("component", "unknown")
+    နုတ် comp ပစ္စည်းတိုင်း စုစုပေါင်း:
+      စုစုပေါင်း[comp] = စုစုပေါင်း[comp] + 1
+    နုတ်မဟုတ်:
+      စုစုပေါင်း[comp] = 1
+
+  အသင်းကိုယ်_စစ်ဆေးချက်["correlations"] = စုစုပေါင်း
+
+  # Risk scoring (0-100)
+  အသင်းကိုယ်_စစ်ဆေးချက်["risk_level"] = (critical_count * 40) + (warning_count * 15)
+  နုတ် အသင်းကိုယ်_စစ်ဆေးချက်["risk_level"] > 100:
+    အသင်းကိုယ်_စစ်ဆေးချက်["risk_level"] = 100
+
+  # Decision engine
+  နုတ် critical_count >= 2:
+    အသင်းကိုယ်_စစ်ဆေးချက်["priority"] = "EMERGENCY"
+    အသင်းကိုယ်_စစ်ဆေးချက်["decision"] = "IMMEDIATE_ALERT"
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Multiple critical failures detected — immediate intervention needed")
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Consider shutting down non-essential processes")
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Check for thermal throttling or hardware damage")
+  နုတ် critical_count >= 1:
+    အသင်းကိုယ်_စစ်ဆေးချက်["priority"] = "HIGH"
+    အသင်းကိုယ်_စစ်ဆေးချက်["decision"] = "ALERT_USER"
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Critical condition detected — alert user immediately")
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Monitor for escalation over next 5 minutes")
+  နုတ် warning_count >= 3:
+    အသင်းကိုယ်_စစ်ဆေးချက်["priority"] = "MEDIUM"
+    အသင်းကိုယ်_စစ်ဆေးချက်["decision"] = "NOTIFY_AND_LOG"
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Multiple warnings accumulating — may escalate")
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Increase monitoring frequency")
+  နုတ် warning_count >= 1:
+    အသင်းကိုယ်_စစ်ဆေးချက်["priority"] = "LOW"
+    အသင်းကိုယ်_စစ်ဆေးချက်["decision"] = "LOG_ONLY"
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Minor warnings — logging and monitoring sufficient")
+
+  # Battery-specific recommendations
+  နုတ် "Battery" ပစ္စည်းတိုင်း စုစုပေါင်း:
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Battery degradation detected — reduce screen brightness and close background apps")
+
+  # Storage-specific recommendations
+  နုတ် "Storage" ပစ္စည်းတိုင်း စုစုပေါင်း:
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Disk space low — clear cache and temporary files")
+
+  # Memory-specific recommendations
+  နုတ် "Memory" ပစ္စည်းတိုင်း စုစုပေါင်း:
+    အသင်းကိုယ်_စစ်ဆေးချက်["recommendations"].append("Memory pressure high — close unused applications")
+
+  ပြန်လည်ပေး = အသင်းကိုယ်_စစ်ဆေးချက်
+
+# ============================================================
+# SECTION 4: Responder Agent — Notification & Action Execution
+# Handles alerts via sound, vibration, and log file output
+# ============================================================
+
+ဖြေ ထုတ်_သတိပေးချက်(analysis_result, anomaly_report):
+  # Execute appropriate response based on analyzer decision
+  ရလဒ်များ = {"actions_taken": [], "status": "OK"}
+  decision = analysis_result.get("decision", "NO_ACTION")
+  priority = analysis_result.get("priority", "LOW")
+  recommendations = analysis_result.get("recommendations", [])
+
+  နုတ် decision == "NO_ACTION":
+    ရလဒ်များ["actions_taken"].append("No action — system nominal")
+    ပြန်လည်ပေး = ရလဒ်များ
+
+  # Build alert message
+  သတိပေးချက်_အကြောင်း = "[" + priority + "] MMC Alarm — " + str(anomaly_report.get("anomaly_count", 0)) + " anomaly(ies) detected"
+
+  # Action 1: Sound notification
+  နုတ် ခန့်မှန်းမှု.notify_sound == ကျန် နဲ့ decision != "NO_ACTION":
+    ပစ္စည်း:
+      အမြဲတမ်း = subprocess.run(
+        ["termux-notification", "--title", "MMC Hardware Alarm", "--content", သတိပေးချက်_အကြောင်း, "--sound"],
+        capture_output=True, text=True, timeout=5
+      )
+      ရလဒ်များ["actions_taken"].append("Sound notification sent")
+    အခြားနည်း:
+      ရလဒ်များ["actions_taken"].append("Sound notification skipped (unavailable)")
+
+  # Action 2: Vibration
+  နုတ် ခန့်မှန်းမှု.notify_vibrate == ကျန် နဲ့ priority == "EMERGENCY":
+    ပစ္စည်း:
+      အမြဲတမ်း = subprocess.run(
+        ["termux-vibrate", "-d", "500"],
+        capture_output=True, text=True, timeout=3
+      )
+      ရလဒ်များ["actions_taken"].append("Vibration alert triggered (500ms)")
+    အခြားနည်း:
+      ရလဒ်များ["actions_taken"].append("Vibration skipped (unavailable)")
+
+  # Action 3: TTS spoken alert for critical/emergency
+  နုတ် priority == "CRITICAL" နိုင် နဲ့ priority == "EMERGENCY":
+    ပစ္စည်း:
+      မှုန်ဝါး_သတိပေးချက် = "Warning. " + သတိပေးချက်_အကြောင်း
+      အမြဲတမ်း = subprocess.run(
+        ["termux-tts-speak", မှုန်ဝါး_သတိပေးချက်],
+        capture_output=True, text=True, timeout=10
+      )
+      ရလဒ်များ["actions_taken"].append("TTS alert spoken: " + မှုန်ဝါး_သတိပေးချက်)
+    အခြားနည်း:
+      ရလဒ်များ["actions_taken"].append("TTS skipped (unavailable)")
+
+  # Action 4: Write to log file
+  နုတ် ခန့်မှန်းမှု.notify_log == ကျန်:
+    log_entry = {
+      "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+      "priority": priority,
+      "decision": decision,
+      "anomaly_count": anomaly_report.get("anomaly_count", 0),
+      "risk_level": analysis_result.get("risk_level", 0),
+      "recommendations": recommendations,
+      "anomalies": anomaly_report.get("anomalies", [])
+    }
+
+    # Append to JSON log file
+    existing_log = []
+    လိုက်ရှိလား = os.path.exists(ခန့်မှန်းမှု.notify_file)
+    နုတ်လိုက်ရှိလား:
+      ပစ္စည်း:
+        f = open(ခန့်မှန်းမှု.notify_file, "r")
+        existing_log = json.loads(f.read())
+        f.close()
+      အခြားနည်း:
+        existing_log = []
+
+    existing_log.append(log_entry)
+
+    f = open(ခန့်မှန်းမှု.notify_file, "w")
+    f.write(json.dumps(existing_log, indent=2, ensure_ascii=False))
+    f.close()
+    ရလဒ်များ["actions_taken"].append("Logged to " + ခန့်မှန်းမှု.notify_file)
+
+  ပြန်လည်ပေး = ရလဒ်များ
+
+# ============================================================
+# SECTION 5: Chain Reaction Pipeline
+# Connects all 3 agents in sequence: Monitor → Analyzer → Responder
+# ============================================================
+
+ဖြေ ခွဲ_ဆက်_စစ်_ဆက်ရှင်လုပ်ဆောင်ချက်():
+  # Full chain: read diag → detect anomalies → analyze → respond
+  အပြည့်_ရလဒ် = {
+    "chain_status": "STARTED",
+    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+    "steps": {}
+  }
+
+  # Step 1: Monitor Agent — Read diagnostic data
+  အပြည့်_ရလဒ်["steps"]["monitor"] = {"status": "RUNNING"}
+  diag_data = ဖိုင်_ဖတ်_ဒေတာ_ပွဲ()
+
+  နုတ် diag_data.get("status") != "OK":
+    အပြည့်_ရလဒ်["steps"]["monitor"] = {"status": "FAILED", "error": diag_data.get("error", "unknown")}
+    အပြည့်_ရလဒ်["chain_status"] = "FAILED_AT_MONITOR"
+    ပြန်လည်ပေး = အပြည့်_ရလဒ်
+
+  အပြည့်_ရလဒ်["steps"]["monitor"] = {"status": "OK", "source": diag_data.get("source")}
+
+  # Step 2: Monitor Agent — Detect anomalies
+  အပြည့်_ရလဒ်["steps"]["anomaly_detection"] = {"status": "RUNNING"}
+  anomaly_report = စစ်_ကိုယ်သတ်မှတ်ချက်_စစ်ဆေးချက်(diag_data.get("data", {}))
+  အပြည့်_ရလဒ်["steps"]["anomaly_detection"] = {
+    "status": "OK",
+    "anomaly_count": anomaly_report.get("anomaly_count", 0),
+    "has_alert": anomaly_report.get("has_alert", မမွေး)
+  }
+
+  # Step 3: Analyzer Agent — Intelligence assessment
+  အပြည့်_ရလဒ်["steps"]["analyzer"] = {"status": "RUNNING"}
+  analysis = ဇုန်_ဆုံး_ဖြတ်ချက်(anomaly_report)
+  အပြည့်_ရလဒ်["steps"]["analyzer"] = {
+    "status": "OK",
+    "priority": analysis.get("priority"),
+    "decision": analysis.get("decision"),
+    "risk_level": analysis.get("risk_level")
+  }
+
+  # Step 4: Responder Agent — Execute response
+  အပြည့်_ရလဒ်["steps"]["responder"] = {"status": "RUNNING"}
+  response = ထုတ်_သတိပေးချက်(analysis, anomaly_report)
+  အပြည့်_ရလဒ်["steps"]["responder"] = {
+    "status": "OK",
+    "actions": response.get("actions_taken", [])
+  }
+
+  အပြည့်_ရလဒ်["chain_status"] = "COMPLETED"
+  အပြည့်_ရလဒ်["chain_duration_ms"] = 0
+
+  ပြန်လည်ပေး = အပြည့်_ရလဒ်
+
+# ============================================================
+# SECTION 6: Daily Schedule Runner
+# Runs the chain reaction alarm on a configurable schedule
+# ============================================================
+
+ဖြေ နေ့စဉ်_လမ်းလျှောက်_စနစ်(max_cycles=1440):
+  # Default: 1440 cycles = 24 hours at 60-second intervals
+  ထုတ်ခြင်း("=== MMC Sequential Alarm — Daily Schedule Started ===")
+  ထုတ်ခြင်း("Interval: " + str(ခန့်မှန်းမှု.monitor_interval_sec) + " seconds")
+  ထုတ်ခြင်း("Max cycles: " + str(max_cycles))
+  ထုတ်ခြင်း("Press Ctrl+C to stop")
+  ထုတ်ခြင်း("")
+
+  ခန့်မှန်း_ရလဒ် = 0
+  လုပ်ဆောင်ချက်_ရလဒ် = 0
+  သတိပေးချက်_ရလဒ် = 0
+
+  i = 0 နုတ် i < max_cycles:
+    ခန့်မှန်း_ရလဒ် = ခန့်မှန်း_ရလဒ် + 1
+    နေ့ရက် = time.strftime("%H:%M:%S")
+
+    # Run the chain
+    ရလဒ် = ခွဲ_ဆက်_စစ်_ဆက်ရှင်လုပ်ဆောင်ချက်()
+
+    နုတ် ရလဒ်.get("chain_status") == "COMPLETED":
+      လုပ်ဆောင်ချက်_ရလဒ် = လုပ်ဆောင်ချက်_ရလဒ် + 1
+
+      # Check if alert was generated
+      decision = ရလဒ်.get("steps", {}).get("analyzer", {}).get("decision", "NO_ACTION")
+      နုတ် decision != "NO_ACTION":
+        သတိပေးချက်_ရလဒ် = သတိပေးချက်_ရလဒ် + 1
+        ထုတ်ခြင်း("[" + နေ့ရက် + "] ALERT #" + str(သတိပေးချက်_ရလဒ်) + " — Priority: " + ရလဒ်.get("steps", {}).get("analyzer", {}).get("priority", "?"))
+      နုတ်မဟုတ်:
+        ထုတ်ခြင်း("[" + နေ့ရက် + "] OK — System nominal")
+
+    # Wait for next interval
+    time.sleep(ခန့်မှန်းမှု.monitor_interval_sec)
+
+  ထုတ်ခြင်း("")
+  ထုတ်ခြင်း("=== Daily Schedule Complete ===")
+  ထုတ်ခြင်း("Total scans: " + str(ခန့်မှန်း_ရလဒ်))
+  ထုတ်ခြင်း("Successful chains: " + str(လုပ်ဆောင်ချက်_ရလဒ်))
+  ထုတ်ခြင်း("Alerts generated: " + str(သတိပေးချက်_ရလဒ်))
+
+# ============================================================
+# SECTION 7: Single-Run Test Mode
+# Runs one chain cycle for testing and validation
+# ============================================================
+
+ဖြေ စမ်းသပ်_လုပ်ဆောင်ချက်():
+  ထုတ်ခြင်း("=== MMC Sequential Alarm — Test Mode ===")
+  ထုတ်ခြင်း("")
+
+  စတင်ချိန် = time.time()
+
+  # Run full chain once
+  ရလဒ် = ခွဲ_ဆက်_စစ်_ဆက်ရှင်လုပ်ဆောင်ချက်()
+
+  ပြီးဆုံးချိန် = time.time()
+  ကွက်လပ်ချိန် = ပြီးဆုံးချိန် - စတင်ချိန်
+
+  # Display results
+  ထုတ်ခြင်း("Chain Status: " + ရလဒ်.get("chain_status"))
+  ထုတ်ခြင်း("Duration: " + str(ပြောင်း(ကွက်လပ်ချိန်, 3)) + " seconds")
+  ထုတ်ခြင်း("")
+
+  # Show each step
+  ခွဲချိန် = ရလဒ်.get("steps", {})
+  ပစ္စည်းတိုင်း(ခွဲချိန်):
+    status = ခွဲချိန်[ပစ္စည်း].get("status", "?")
+    ထုတ်ခြင်း("  [" + status + "] " + ပစ္စည်း)
+    နုတ် status != "OK":
+      ထုတ်ခြင်း("    Error: " + str(ခွဲချိန်[ပစ္စည်း].get("error", "none")))
+
+  ထုတ်ခြင်း("")
+
+  # Show anomalies if any
+  monitor_step = ခွဲချိန်.get("anomaly_detection", {})
+  နုတ် monitor_step.get("anomaly_count", 0) > 0:
+    ထုတ်ခြင်း("Anomalies detected: " + str(monitor_step.get("anomaly_count")))
+  နုတ်မဟုတ်:
+    ထုတ်ခြင်း("No anomalies — system healthy")
+
+  ထုတ်ခြင်း("")
+
+  # Show analysis
+  analyzer_step = ခွဲချိန်.get("analyzer", {})
+  ထုတ်ခြင်း("Analysis Priority: " + str(analyzer_step.get("priority", "N/A")))
+  ထုတ်ခြင်း("Decision: " + str(analyzer_step.get("decision", "N/A")))
+  ထုတ်ခြင်း("Risk Level: " + str(analyzer_step.get("risk_level", 0)) + "/100")
+
+  ထုတ်ခြင်း("")
+  ထုတ်ခြင်း("=== Test Complete ===")
+
+# ============================================================
+# SECTION 8: Main Execution Entry Point
+# Supports test mode, single-run, and scheduled modes
+# ============================================================
+
+ပစ္စည်းတိုင်း __name__ == "__mmc_main__":
+  မျက် Erickson = နုတ် len(စာရင်း_အမျိုးအစား) > 1 နုတ် စာရင်း_အမျိုးအစား[1]:
+    မျက် Erickson = စာရင်း_အမျိုးအစား[1]
+
+  ထုတ်ခြင်း("=== MMC Sequential Alarm System v1.0 ===")
+  ထုတ်ခြင်း("Phase 6.2 — 3-Agent Chain Reaction Architecture")
+  ထုတ်ခြင်း("")
+
+  နုတ် မျက် Erickson == "test":
+    စမ်းသပ်_လုပ်ဆောင်ချက်()
+  နုတ် မျက် Erickson == "schedule":
+    cycles = 1440
+    နုတ် len(စာရင်း_အမျိုးအစား) > 2:
+      cycles = int(စာရင်း_အမျိုးအစား[2])
+    နေ့စဉ်_လမ်းလျှောက်_စနစ်(cycles)
+  နုတ်မဟုတ်:
+    ထုတ်ခြင်း("Usage:")
+    ထုတ်ခြင်း("  mmc_sequential_alarm test       — Run single chain test")
+    ထုတ်ခြင်း("  mmc_sequential_alarm schedule    — Run 24-hour schedule")
+    ထုတ်ခြင်း("  mmc_sequential_alarm schedule 60 — Run 60 cycles")
+    ထုတ်ခြင်း("")
+    ထုတ်ခြင်း("Running default: single chain test")
+    စမ်းသပ်_လုပ်ဆောင်ချက်()
