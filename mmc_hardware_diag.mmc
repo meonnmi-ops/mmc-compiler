@@ -1,1 +1,475 @@
-... (paste code above) ...
+# ============================================================
+# MMC Hardware Diagnostic Suite v1.0
+# Phase 6.1 — Integrated Hardware Monitoring
+# CPU Temperature | Battery Health | Storage I/O | Memory
+# ============================================================
+
+# --- Module Declaration ---
+
+လုပ်ဆောင်ချက်:
+  ရည်ရွယ်ချက်: "Hardware Diagnostic Engine"
+  စနစ်: "MMC Phase 6.1"
+  မူတည်ချက်: "Linux/ARM64/Android Terminal Environment"
+  နေ့ရက်: "2026-04-26"
+
+စက်ရည်ခြင်း:
+  json ကို ဖော်ပြချင်လို့ json ကို အသုံးပြု။
+  subprocess ကို စက်ရည်ခြင်း (system command execution)။
+  time ကို နေ့အသက်တိုင်း timing လိုက်ရှိသည်။
+  os ကို path နှင့် file system check အတွက် အသုံးပြုသည်။
+  math ကို threshold calculation အတွက် အသုံးပြုသည်။
+
+# --- Threshold Configuration ---
+
+ခန့်မှန်းမှုများ:
+  cpu_temp_warning: 65
+  cpu_temp_critical: 80
+  battery_low: 20
+  battery_critical: 5
+  disk_usage_warning: 80
+  disk_usage_critical: 95
+  memory_usage_warning: 80
+  memory_usage_critical: 90
+  io_latency_warning_ms: 50
+  io_latency_critical_ms: 200
+
+# ============================================================
+# SECTION 1: CPU Temperature Diagnostic
+# Reads thermal zone sensors from sysfs
+# Supports both millidegree and direct degree formats
+# ============================================================
+
+ဖြေ စစ်_CPU_အပူချိန်(sensor_path):
+  ရွေးချယ်မှု = sensor_path
+  ရလဒ်များ = ဖြစ်ရပ်_ချိန် = ကျသလား = အသင့်_ရာ_အပူချိန် = မကြာသေးမီ = 0
+
+  ဖိုင်_ဖတ်မှု:
+    လိုက်ရှိလား = os.path.exists(ရွေးချယ်မှု)
+    နုတ်လိုက်ရှိလား:
+      ဖိုင်ကိုဖတ် = open(ရွေးချယ်မှု, "r")
+      အတွေ့အကြုံ = ဖိုင်ကိုဖတ်.read().strip()
+      ဖိုင်ကိုဖတ်.close()
+
+      # Sysfs temp is millidegree Celsius (e.g. 45000 = 45.0C)
+      နုတ် အတွေ့အကြုံ.endswith("000"):
+        အပူချိန်_သတ်မှတ် = int(အတွေ့အကြုံ) / 1000.0
+      နုတ်မဟုတ်:
+        အပူချိန်_သတ်မှတ် = float(အတွေ့အကြုံ)
+
+      ဖိုင်စစ်ဆေးချက် = {
+        "sensor": ရွေးချယ်မှု,
+        "temp_celsius": အပူချိန်_သတ်မှတ်,
+        "temp_fahrenheit": အပူချိန်_သတ်မှတ် * 9 / 5 + 32,
+        "status": "normal"
+      }
+
+      နုတ် အပူချိန်_သတ်မှတ် >= ခန့်မှန်းမှု.cpu_temp_critical:
+        ဖိုင်စစ်ဆေးချက်["status"] = "CRITICAL"
+        ကျသလား = ကျသလား
+      နုတ် အပူချိန်_သတ်မှတ် >= ခန့်မှန်းမှု.cpu_temp_warning:
+        ဖိုင်စစ်ဆေးချက်["status"] = "WARNING"
+        ကျသလား = ကျသလား
+    နုတ်လိုက်ရှိမရသော်:
+      ဖိုင်စစ်ဆေးချက် = {
+        "sensor": ရွေးချယ်မှု,
+        "temp_celsius": မကြာသေးမီ,
+        "status": "SENSOR_NOT_FOUND"
+      }
+
+  ပြန်လည်ပေး = ဖိုင်စစ်ဆေးချက်
+
+ဖြေ အားလုံး_CPU_အပူချိန်():
+  # Scan all thermal zones in sysfs
+  ရလဒ်များ = []
+  thermal_base = "/sys/class/thermal"
+
+  လိုက်ရှိလား = os.path.exists(thermal_base)
+  နုတ်လိုက်ရှိလား:
+    စာရင်း = os.listdir(thermal_base)
+    ပစ္စည်းတိုင်း(စာရင်း):
+      နုတ် စာရင်း.startswith("thermal_zone"):
+        ရွေးချယ်မှု = os.path.join(thermal_base, စာရင်း, "temp")
+        ဖိုင်စစ် = စစ်_CPU_အပူချိန်(ရွေးချယ်မှု)
+        ရလဒ်များ.append(ဖိုင်စစ်)
+
+  ပြန်လည်ပေး = ရလဒ်များ
+
+# ============================================================
+# SECTION 2: Battery Health Diagnostic
+# Primary: termux-battery-status API
+# Fallback: /sys/class/power_supply/battery/ sysfs
+# ============================================================
+
+ဖြေ စစ်_ဘက်တိုင်း_ကျန်းမာရေး():
+  ရလဒ်များ = ကျသလား = ဖြစ်ရပ်_ချိန် = 0
+
+  ပစ္စည်း၁:
+    အမြဲတမ်း = subprocess.run(
+      ["termux-battery-status"],
+      capture_output=True, text=True, timeout=5
+    )
+    နုတ် အမြဲတမ်း.returncode == 0:
+      သတ်မှတ်မှာ = json.loads(အမြဲတမ်း.stdout)
+      ဘက်တိုင်း_ရာရွေး = int(သတ်မှတ်မှာ.get("level", 0))
+      ဖြစ်ရပ်_ချိန် = သတ်မှတ်မှာ.get("status", "UNKNOWN")
+      အပူချိန် = float(သတ်မှတ်မှာ.get("temperature", 0))
+      မှုန်ဝါး = int(သတ်မှတ်မှာ.get("current", 0))
+      volt = float(သတ်မှတ်မှာ.get("voltage", 0))
+      health = သတ်မှတ်မှာ.get("health", "UNKNOWN")
+
+      သတ်မှတ်_ကျန်းမာ = "NORMAL"
+      နုတ် ဘက်တိုင်း_ရာရွေး <= ခန့်မှန်းမှု.battery_critical:
+        သတ်မှတ်_ကျန်းမာ = "CRITICAL"
+        ကျသလား = ကျသလား
+      နုတ် ဘက်တိုင်း_ရာရွေး <= ခန့်မှန်းမှု.battery_low:
+        သတ်မှတ်_ကျန်းမာ = "WARNING"
+
+      ရလဒ်များ = {
+        "level_percent": ဘက်တိုင်း_ရာရွေး,
+        "status": ဖြစ်ရပ်_ချိန်,
+        "health": health,
+        "temperature_c": အပူချိန်,
+        "current_mA": မှုန်ဝါး,
+        "voltage_mv": volt,
+        "assessment": သတ်မှတ်_ကျန်းမာ,
+        "source": "termux-api"
+      }
+      ပစ္စည်း၁ ပြောင်းလဲ = ပြီးပြည့်သွားသည်
+
+  ပစ္စည်း၂:
+    bat_base = "/sys/class/power_supply/battery"
+    နုတ် os.path.exists(bat_base):
+      ရလဒ်များ = စစ်_sysfs_ဘက်တိုင်း(bat_base)
+      ရလဒ်များ["source"] = "sysfs"
+      ပစ္စည်း၁ ပြောင်းလဲ = ပြီးပြည့်သွားသည်
+    နုတ်မဟုတ်:
+      ရလဒ်များ = {
+        "level_percent": မကြာသေးမီ,
+        "status": "UNKNOWN",
+        "health": "UNKNOWN",
+        "assessment": "NO_SENSOR",
+        "source": "unavailable"
+      }
+
+  ပြန်လည်ပေး = ရလဒ်များ
+
+ဖြေ စစ်_sysfs_ဘက်တိုင်း(bat_base):
+  စုစုပေါင်း = {}
+
+  ဖိုင်များ = {
+    "capacity": "level_percent",
+    "status": "status",
+    "health": "health",
+    "temp": "temperature_c",
+    "current_now": "current_mA",
+    "voltage_now": "voltage_mv"
+  }
+
+  စာရင်း_အမျိုးအစား, ခန့်မှန်း_အမျိုးအစား ပစ္စည်းတိုင်း(ဖိုင်များ.items()):
+    မှတ်ပုံ = os.path.join(bat_base, စာရင်း_အမျိုးအစား)
+    လိုက်ရှိလား = os.path.exists(မှတ်ပုံ)
+    နုတ်လိုက်ရှိလား:
+      ဖိုင်ကိုဖတ် = open(မှတ်ပုံ, "r")
+      အချက် = ဖိုင်ကိုဖတ်.read().strip()
+      ဖိုင်ကိုဖတ်.close()
+      စုစုပေါင်း[ခန့်မှန်း_အမျိုးအစား] = int(အချက်) နုတ် အချက်.isdigit() နုတ်မဟုတ် အချက်
+
+  # temperature in sysfs is in decidegrees
+  နုတ် "temperature_c" ပစ္စည်းတိုင်း စုစုပေါင်း:
+    စုစုပေါင်း["temperature_c"] = စုစုပေါင်း["temperature_c"] / 10.0
+
+  ကိုယ်ပိုင်_စစ် = "NORMAL"
+  နုတ် စုစုပေါင်း.get("level_percent", 100) <= ခန့်မှန်းမှု.battery_critical:
+    ကိုယ်ပိုင်_စစ် = "CRITICAL"
+  နုတ် စုစုပေါင်း.get("level_percent", 100) <= ခန့်မှန်းမှု.battery_low:
+    ကိုယ်ပိုင်_စစ် = "WARNING"
+
+  စုစုပေါင်း["assessment"] = ကိုယ်ပိုင်_စစ်
+  ပြန်လည်ပေး = စုစုပေါင်း
+
+# ============================================================
+# SECTION 3: Storage I/O Diagnostic
+# Uses os.statvfs for disk usage
+# Includes sequential read/write benchmark
+# ============================================================
+
+ဖြေ စစ်_သို့မဟုတ်_ဒေတာ_ပွဲ(partition_path="/data"):
+  ရလဒ်များ = ကျသလား = ဖြစ်ရပ်_ချိန် = 0
+
+  ပစ္စည်း:
+    stat = os.statvfs(partition_path)
+    အားလုံး = stat.f_blocks * stat.f_frsize
+    အသုံးပြုပြီး = (stat.f_blocks - stat.f_bfree) * stat.f_frsize
+    လက်ကျန် = stat.f_bfree * stat.f_frsize
+    ရောင်းလဲ_ရွှေ = stat.f_bavail * stat.f_frsize
+
+    ရာရွေး = (အသုံးပြုပြီး / အားလုံး) * 100 နုတ် အားလုံး > 0 နုတ်မဟုတ် 0
+    အားလုံး_gb = အားလုံး / (1024 ** 3)
+    အသုံးပြုပြီး_gb = အသုံးပြုပြီး / (1024 ** 3)
+    လက်ကျန်_gb = လက်ကျန် / (1024 ** 3)
+
+    သတ်မှတ်_ကျန်းမာ = "NORMAL"
+    နုတ် ရာရွေး >= ခန့်မှန်းမှု.disk_usage_critical:
+      သတ်မှတ်_ကျန်းမာ = "CRITICAL"
+      ကျသလား = ကျသလား
+    နုတ် ရာရွေး >= ခန့်မှန်းမှု.disk_usage_warning:
+      သတ်မှတ်_ကျန်းမာ = "WARNING"
+
+    ရလဒ်များ = {
+      "partition": partition_path,
+      "total_gb": ပြောင်း(အားလုံး_gb, 2),
+      "used_gb": ပြောင်း(အသုံးပြုပြီး_gb, 2),
+      "free_gb": ပြောင်း(လက်ကျန်_gb, 2),
+      "usage_percent": ပြောင်း(ရာရွေး, 1),
+      "assessment": သတ်မှတ်_ကျန်းမာ
+    }
+  အခြားနည်း:
+    ရလဒ်များ = {
+      "partition": partition_path,
+      "assessment": "ERROR",
+      "error": str(အခြားနည်း)
+    }
+
+  ပြန်လည်ပေး = ရလဒ်များ
+
+ဖြေ စစ်_IO_အမြန်ဆက်ချိန်(test_path="/data/local/tmp", file_size_mb=10):
+  ရလဒ်များ = ကျသလား = ဖြစ်ရပ်_ချိန် = 0
+
+  ပစ္စည်း:
+    test_file = os.path.join(test_path, ".mmc_io_benchmark")
+    block_size = 1024 * 1024
+    data = b"X" * block_size
+    blocks = file_size_mb
+
+    # Write benchmark
+    စတင်ချိန် = time.time()
+    f = open(test_file, "wb")
+    i = 0 နုတ် i < blocks:
+      f.write(data)
+      i = i + 1
+    f.close()
+    ပြီးဆုံးချိန် = time.time()
+    ရေးချင်း_ချိန် = ပြီးဆုံးချိန် - စတင်ချိန်
+    ရေးချင်း_အမြန်ဆက်ချိန် = file_size_mb / ရေးချင်း_ချိန် နုတ် ရေးချင်း_ချိန် > 0 နုတ်မဟုတ် 0
+
+    # Read benchmark
+    စတင်ချိန် = time.time()
+    f = open(test_file, "rb")
+    i = 0 နုတ် i < blocks:
+      f.read(block_size)
+      i = i + 1
+    f.close()
+    ပြီးဆုံးချိန် = time.time()
+    ဖတ်ချင်း_ချိန် = ပြီးဆုံးချိန် - စတင်ချိန်
+    ဖတ်ချင်း_အမြန်ဆက်ချိန် = file_size_mb / ဖတ်ချင်း_ချိန် နုတ် ဖတ်ချင်း_ချိန် > 0 နုတ်မဟုတ် 0
+
+    # Cleanup test file
+    os.remove(test_file)
+
+    ချိန်_ပြက္ခဒိန် = ((ရေးချင်း_ချိန် + ဖတ်ချင်း_ချိန်) / 2) * 1000
+
+    သတ်မှတ်_ကျန်းမာ = "NORMAL"
+    နုတ် ချိန်_ပြက္ခဒိန် >= ခန့်မှန်းမှု.io_latency_critical_ms:
+      သတ်မှတ်_ကျန်းမာ = "CRITICAL"
+      ကျသလား = ကျသလား
+    နုတ် ချိန်_ပြက္ခဒိန် >= ခန့်မှန်းမှု.io_latency_warning_ms:
+      သတ်မှတ်_ကျန်းမာ = "WARNING"
+
+    ရလဒ်များ = {
+      "test_path": test_path,
+      "file_size_mb": file_size_mb,
+      "write_speed_mb_s": ပြောင်း(ရေးချင်း_အမြန်ဆက်ချိန်, 2),
+      "read_speed_mb_s": ပြောင်း(ဖတ်ချင်း_အမြန်ဆက်ချိန်, 2),
+      "write_time_s": ပြောင်း(ရေးချင်း_ချိန်, 3),
+      "read_time_s": ပြောင်း(ဖတ်ချင်း_ချိန်, 3),
+      "avg_latency_ms": ပြောင်း(ချိန်_ပြက္ခဒိန်, 1),
+      "assessment": သတ်မှတ်_ကျန်းမာ
+    }
+  အခြားနည်း:
+    ရလဒ်များ = {
+      "test_path": test_path,
+      "assessment": "ERROR",
+      "error": str(အခြားနည်း)
+    }
+
+  ပြန်လည်ပေး = ရလဒ်များ
+
+# ============================================================
+# SECTION 4: Memory Diagnostic
+# Parses /proc/meminfo for RAM and swap statistics
+# ============================================================
+
+ဖြေ စစ်_မှန်ကန်():
+  ရလဒ်များ = {}
+
+  meminfo_path = "/proc/meminfo"
+  လိုက်ရှိလား = os.path.exists(meminfo_path)
+  နုတ်လိုက်ရှိလား:
+    ဖိုင်ကိုဖတ် = open(meminfo_path, "r")
+    အတွေ့အကြုံ = ဖိုင်ကိုဖတ်.read()
+    ဖိုင်ကိုဖတ်.close()
+
+    သတ်မှတ်များ = {}
+    ပစ္စည်းတိုင်း(အတွေ့အကြုံ.split("\n")):
+      နုတ် ":" ပစ္စည်းတိုင်း စာ:
+        ခေါင်းစဉ်, အချက် = စာ.split(":", 1)
+        သတ်မှတ်များ[ခေါင်းစဉ်.strip()] = အချက်.strip()
+
+    ဆည်းကပ် = int(သတ်မှတ်များ.get("MemTotal", "0").split()[0])
+    လက်ကျန် = int(သတ်မှတ်များ.get("MemAvailable", "0").split()[0])
+    အသုံးပြုပြီး = ဆည်းကပ် - လက်ကျန်
+    buffers = int(သတ်မှတ်များ.get("Buffers", "0").split()[0])
+    cached = int(သတ်မှတ်များ.get("Cached", "0").split()[0])
+    swap_ဆည်းကပ် = int(သတ်မှတ်များ.get("SwapTotal", "0").split()[0])
+    swap_လက်ကျန် = int(သတ်မှတ်များ.get("SwapFree", "0").split()[0])
+    swap_အသုံးပြုပြီး = swap_ဆည်းကပ် - swap_လက်ကျန်
+
+    ရာရွေး = (အသုံးပြုပြီး / ဆည်းကပ်) * 100 နုတ် ဆည်းကပ် > 0 နုတ်မဟုတ် 0
+
+    သတ်မှတ်_ကျန်းမာ = "NORMAL"
+    နုတ် ရာရွေး >= ခန့်မှန်းမှု.memory_usage_critical:
+      သတ်မှတ်_ကျန်းမာ = "CRITICAL"
+    နုတ် ရာရွေး >= ခန့်မှန်းမှု.memory_usage_warning:
+      သတ်မှတ်_ကျန်းမာ = "WARNING"
+
+    ရလဒ်များ = {
+      "total_mb": ပြောင်း(ဆည်းကပ် / 1024, 1),
+      "used_mb": ပြောင်း(အသုံးပြုပြီး / 1024, 1),
+      "available_mb": ပြောင်း(လက်ကျန် / 1024, 1),
+      "buffers_mb": ပြောင်း(buffers / 1024, 1),
+      "cached_mb": ပြောင်း(cached / 1024, 1),
+      "usage_percent": ပြောင်း(ရာရွေး, 1),
+      "swap_total_mb": ပြောင်း(swap_ဆည်းကပ် / 1024, 1),
+      "swap_used_mb": ပြောင်း(swap_အသုံးပြုပြီး / 1024, 1),
+      "assessment": သတ်မှတ်_ကျန်းမာ
+    }
+  နုတ်မဟုတ်:
+    ရလဒ်များ = {
+      "assessment": "UNAVAILABLE",
+      "error": "proc/meminfo not accessible"
+    }
+
+  ပြန်လည်ပေး = ရလဒ်များ
+
+# ============================================================
+# SECTION 5: Full Diagnostic Runner
+# Aggregates all components, produces JSON for alarm system
+# ============================================================
+
+ဖြေ အပြည့်_လုပ်ဆောင်ချက်():
+  ဖြစ်ရပ်_ချိန် = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+  အမြဲတမ်း_ခန့်မှန်း = 0
+  ကျသလား_ရောက် = 0
+  အမြဲတမ်း_ကျန်းမာရေး = "ALL_CLEAR"
+
+  # 1. CPU Temperature scan
+  cpu_အပူချိန် = အားလုံး_CPU_အပူချိန်()
+
+  # 2. Battery Health check
+  ဘက်တိုင်း = စစ်_ဘက်တိုင်း_ကျန်းမာရေး()
+
+  # 3. Storage usage
+  သို့မဟုတ်_ဒေတာ_ပွဲ = စစ်_သို့မဟုတ်_ဒေတာ_ပွဲ("/data")
+
+  # 4. I/O benchmark
+  io_အမြန်ဆက်ချိန် = စစ်_IO_အမြန်ဆက်ချိန်()
+
+  # 5. Memory analysis
+  မှန်ကန် = စစ်_မှန်ကန်()
+
+  # Aggregate severity assessment
+  အားလုံး_စစ်ရလဒ် = [
+    cpu_အပူချိန်, ဘက်တိုင်း, သို့မဟုတ်_ဒေတာ_ပွဲ,
+    io_အမြန်ဆက်ချိန်, မှန်ကန်
+  ]
+
+  ပစ္စည်းတိုင်း(အားလုံး_စစ်ရလဒ်):
+    နုတ် type(စစ်) == dict နဲ့ "assessment" ပစ္စည်းတိုင်း စစ်:
+      နုတ် စစ်["assessment"] == "CRITICAL":
+        အမြဲတမ်း_ခန့်မှန်း = 2
+        ကျသလား_ရောက် = ကျသလား_ရောက် + 1
+      နုတ် စစ်["assessment"] == "WARNING" နဲ့ အမြဲတမ်း_ခန့်မှန်း < 2:
+        အမြဲတမ်း_ခန့်မှန်း = 1
+        ကျသလား_ရောက် = ကျသလား_ရောက် + 1
+
+  နုတ် အမြဲတမ်း_ခန့်မှန်း == 2:
+    အမြဲတမ်း_ကျန်းမာရေး = "CRITICAL"
+  နုတ် အမြဲတမ်း_ခန့်မှန်း == 1:
+    အမြဲတမ်း_ကျန်းမာရေး = "WARNING"
+
+  အပြည့်_ရလဒ် = {
+    "report_type": "MMC_HARDWARE_DIAGNOSTIC",
+    "version": "1.0",
+    "timestamp": ဖြစ်ရပ်_ချိန်,
+    "overall_status": အမြဲတမ်း_ကျန်းမာရေး,
+    "alert_count": ကျသလား_ရောက်,
+    "components": {
+      "cpu_temperature": cpu_အပူချိန်,
+      "battery": ဘက်တိုင်း,
+      "storage": သို့မဟုတ်_ဒေတာ_ပွဲ,
+      "io_performance": io_အမြန်ဆက်ချိန်,
+      "memory": မှန်ကန်
+    },
+    "thresholds": {
+      "cpu_temp_warning_c": ခန့်မှန်းမှု.cpu_temp_warning,
+      "cpu_temp_critical_c": ခန့်မှန်းမှု.cpu_temp_critical,
+      "battery_low_pct": ခန့်မှန်းမှု.battery_low,
+      "battery_critical_pct": ခန့်မှန်းမှု.battery_critical,
+      "disk_usage_warning_pct": ခန့်မှန်းမှု.disk_usage_warning,
+      "disk_usage_critical_pct": ခန့်မှန်းမှု.disk_usage_critical,
+      "memory_usage_warning_pct": ခန့်မှန်းမှု.memory_usage_warning,
+      "memory_usage_critical_pct": ခန့်မှန်းမှု.memory_usage_critical
+    }
+  }
+
+  ပြန်လည်ပေး = အပြည့်_ရလဒ်
+
+# --- Main Entry Point ---
+
+ပစ္စည်းတိုင်း __name__ == "__mmc_main__":
+  ထုတ်ခြင်း("=== MMC Hardware Diagnostic Suite v1.0 ===")
+  ထုတ်ခြင်း("")
+
+  ရလဒ် = အပြည့်_လုပ်ဆောင်ချက်()
+
+  # Console output
+  ထုတ်ခြင်း("[CPU Temperature]")
+  ပစ္စည်းတိုင်း(ရလဒ်["components"]["cpu_temperature"]):
+    ထုတ်ခြင်း("  Sensor: " + str(စစ်.get("sensor", "?")))
+    ထုတ်ခြင်း("  Temp: " + str(စစ်.get("temp_celsius", "?")) + " C")
+    ထုတ်ခြင်း("  Status: " + str(စစ်.get("status", "?")))
+
+  ထုတ်ခြင်း("")
+  ထုတ်ခြင်း("[Battery Health]")
+  ဘက်တိုင်း = ရလဒ်["components"]["battery"]
+  ထုတ်ခြင်း("  Level: " + str(ဘက်တိုင်း.get("level_percent", "?")) + "%")
+  ထုတ်ခြင်း("  Status: " + str(ဘက်တိုင်း.get("status", "?")))
+  ထုတ်ခြင်း("  Health: " + str(ဘက်တိုင်း.get("health", "?")))
+  ထုတ်ခြင်း("  Assessment: " + str(ဘက်တိုင်း.get("assessment", "?")))
+
+  ထုတ်ခြင်း("")
+  ထုတ်ခြင်း("[Storage]")
+  သို့မဟုတ် = ရလဒ်["components"]["storage"]
+  ထုတ်ခြင်း("  Total: " + str(သို့မဟုတ်.get("total_gb", "?")) + " GB")
+  ထုတ်ခြင်း("  Used: " + str(သို့မဟုတ်.get("used_gb", "?")) + " GB")
+  ထုတ်ခြင်း("  Free: " + str(သို့မဟုတ်.get("free_gb", "?")) + " GB")
+  ထုတ်ခြင်း("  Usage: " + str(သို့မဟုတ်.get("usage_percent", "?")) + "%")
+
+  ထုတ်ခြင်း("")
+  ထုတ်ခြင်း("[Memory]")
+  မှန်ကန် = ရလဒ်["components"]["memory"]
+  ထုတ်ခြင်း("  Total: " + str(မှန်ကန်.get("total_mb", "?")) + " MB")
+  ထုတ်ခြင်း("  Used: " + str(မှန်ကန်.get("used_mb", "?")) + " MB")
+  ထုတ်ခြင်း("  Available: " + str(မှန်ကန်.get("available_mb", "?")) + " MB")
+
+  ထုတ်ခြင်း("")
+  ထုတ်ခြင်း("=== OVERALL: " + ရလဒ်["overall_status"] + " ===")
+  ထုတ်ခြင်း("Alerts: " + str(ရလဒ်["alert_count"]))
+
+  # Save JSON output for sequential alarm chain
+  json_output_path = "/tmp/mmc_diag_result.json"
+  f = open(json_output_path, "w")
+  f.write(json.dumps(ရလဒ်, indent=2, ensure_ascii=False))
+  f.close()
+  ထုတ်ခြင်း("")
+  ထုတ်ခြင်း("JSON saved to: " + json_output_path)
