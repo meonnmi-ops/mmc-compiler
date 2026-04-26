@@ -46,6 +46,8 @@
 
 /* POSIX for usleep() */
 #include <unistd.h>
+/* For clock / time functions */
+#include <time.h>
 
 /* ALSA support (optional) */
 #ifdef MMC_AUDIO_ALSA
@@ -59,7 +61,7 @@
 #define MMC_PI                    3.14159265358979323846
 #define MMC_TWO_PI                (2.0 * MMC_PI)
 #define MMC_DEFAULT_SAMPLE_RATE   44100
-#define MMC_MAX_PCM_BUFFER        (44100 * 2)   /* 2 seconds max buffer */
+#define MMC_MAX_PCM_BUFFER        (44100 * 6)   /* 6 seconds max buffer (MZT chime needs ~4.5s) */
 #define MMC_MAX_VOLUME            32767          /* 16-bit signed max */
 #define MMC_ATTACK_SMOOTH         0.05           /* 5% of duration */
 #define MMC_RELEASE_SMOOTH        0.10           /* 10% of duration */
@@ -105,7 +107,7 @@ static MMC_Audio_Config g_audio_cfg = {
     .device_name = "default"
 };
 
-/* PCM sample buffer - allocated once, reused for all sounds */
+/* PCM sample buffer - allocated once, reused for all sounds (6 seconds @ 44100Hz) */
 static int16_t g_pcm_buffer[MMC_MAX_PCM_BUFFER];
 
 /* ALSA handle (NULL when ALSA is not active) */
@@ -310,40 +312,71 @@ static double envelope(int sample, int total, double attack_frac, double release
 
 /*
  * ============================================================================
- *  ၁။  မြန်မာစံတော်ချိန် - Sain Chime (Startup)
+ *  ၁။  မြန်မာစံတော်ချိန် - MZT Sain Chime (Startup)
  *
- *  The traditional time-signal gong pattern: 5 ascending tones.
- *  C5 -> E5 -> G5 -> C6 -> E6
- *  120ms per tone, 50ms gap, quick attack (10ms), quick release (20ms).
+ *  Authentic Myanmar Standard Time chime pattern extracted from
+ *  MRTV broadcast recording (Thant Xin, Yangon Region).
+ *
+ *  Pattern analysis from reference audio (78.5s - 81.3s time signal):
+ *    Note 1: 440 Hz (A4)  - concert pitch bell    @ 78.532s
+ *    Note 2: 430 Hz (Ab4) - slightly flat bell      @ 79.594s  (gap ~1060ms)
+ *    Note 3: 387 Hz (G4)  - lower chime tone        @ 80.502s  (gap ~908ms)
+ *    Note 4: 4033 Hz (B7) - final high bell strike   @ 81.310s  (gap ~808ms)
+ *
+ *  Rhythm: Accelerando (gaps shrink: 1060ms -> 908ms -> 808ms)
+ *  Timbre: Bell-like with harmonics at 2x and 3x fundamental
  * ============================================================================
  */
 static int mmc_audio_sain_chime(void)
 {
-    double freqs[] = { 523.25, 659.25, 783.99, 1046.50, 1318.51 };
-    int note_dur_ms    = 120;
-    int gap_dur_ms     = 50;
-    int attack_ms      = 10;
-    int release_ms     = 20;
-    int num_notes      = 5;
+    double freqs[] = { 440.0, 430.0, 387.0, 4033.0 };
+    int note_dur_ms[] = { 800, 700, 600, 500 };
+    int gap_dur_ms[]  = { 1060, 908, 808, 0 };
+    int attack_ms      = 8;
+    int release_ms     = 150;
+    int num_notes      = 4;
     int i, n;
 
     int idx = 0;
     double vol = (double)g_audio_cfg.volume_pct / 100.0;
 
     for (i = 0; i < num_notes && idx < MMC_MAX_PCM_BUFFER; i++) {
-        int note_frames = (g_audio_cfg.sample_rate * note_dur_ms) / 1000;
-        int gap_frames  = (g_audio_cfg.sample_rate * gap_dur_ms) / 1000;
+        int dur = note_dur_ms[i];
+        int gap = gap_dur_ms[i];
+        int note_frames = (g_audio_cfg.sample_rate * dur) / 1000;
+        int gap_frames  = (g_audio_cfg.sample_rate * gap) / 1000;
 
         if (idx + note_frames > MMC_MAX_PCM_BUFFER)
             note_frames = MMC_MAX_PCM_BUFFER - idx;
 
-        /* Generate sine tone for this note */
+        /* Generate bell-like tone: fundamental + 2nd + 3rd harmonics */
         for (n = 0; n < note_frames; n++) {
             double t = (double)n / (double)g_audio_cfg.sample_rate;
             double env = envelope(n, note_frames,
-                                   (double)attack_ms / (double)note_dur_ms,
-                                   (double)release_ms / (double)note_dur_ms);
-            double sample = mmc_sine(MMC_TWO_PI * freqs[i] * t) * env * vol;
+                                   (double)attack_ms / (double)dur,
+                                   (double)release_ms / (double)dur);
+
+            /* Bell timbre: fundamental + overtones with exponential decay */
+            double decay = 1.0 - ((double)n / (double)note_frames);
+            double bell_decay = 1.0 - decay * decay;  /* Quadratic: fast initial, slow tail */
+            double env_bell = env * (1.0 - 0.5 * bell_decay);  /* Preserve some attack */
+
+            /* Fundamental */
+            double fund = mmc_sine(MMC_TWO_PI * freqs[i] * t);
+
+            /* 2nd harmonic at 30% amplitude (bell overtone) */
+            double h2 = mmc_sine(MMC_TWO_PI * freqs[i] * 2.0 * t) * 0.30;
+
+            /* 3rd harmonic at 15% amplitude */
+            double h3 = mmc_sine(MMC_TWO_PI * freqs[i] * 3.0 * t) * 0.15;
+
+            /* Inharmonic partial at 2.76x (metallic bell character) */
+            double hip = mmc_sine(MMC_TWO_PI * freqs[i] * 2.76 * t) * 0.08;
+
+            /* Combine and normalize: max possible = 1.0 + 0.30 + 0.15 + 0.08 = 1.53 */
+            double wave = (fund + h2 + h3 + hip) / 1.53;
+            double sample = wave * env_bell * vol;
+
             int32_t raw = (int32_t)(sample * MMC_MAX_VOLUME);
             int16_t pcm;
             if (raw >  MMC_MAX_VOLUME) raw =  MMC_MAX_VOLUME;
@@ -352,14 +385,15 @@ static int mmc_audio_sain_chime(void)
             g_pcm_buffer[idx++] = pcm;
         }
 
-        /* Silence gap between notes */
+        /* Silence gap between notes (accelerando built into gap_dur_ms[]) */
         for (n = 0; n < gap_frames && idx < MMC_MAX_PCM_BUFFER; n++) {
             g_pcm_buffer[idx++] = 0;
         }
     }
 
     /* Total duration for console bell fallback */
-    int total_ms = num_notes * (note_dur_ms + gap_dur_ms);
+    int total_ms = 0;
+    for (i = 0; i < num_notes; i++) total_ms += note_dur_ms[i] + gap_dur_ms[i];
     pcm_write(g_pcm_buffer, idx, total_ms);
     return idx;
 }
@@ -777,6 +811,185 @@ int mmc_audio_cleanup(void)
     g_audio_initialized = 0;
 
     return 0;
+}
+
+/* ============================================================================
+ *  ၆။  မြန်မာစံတော်ချိန် အချိန်ပြောခြင်း (MZT Time Announce)
+ *
+ *  Plays the MZT identification chime followed by N gong strikes for
+ *  the current hour.  Like Big Ben or a Buddhist temple bell tower,
+ *  this tells the time through sound alone.
+ *
+ *  Pattern:
+ *    [MZT 4-note chime] → [800ms pause] → [N x မောင်း gong strikes]
+ *
+ *  Hour mapping (24h → strikes):
+ *    00:00 → 12 strikes (midnight)
+ *    01:00 → 1  strike
+ *    ...
+ *    12:00 → 12 strikes (noon)
+ *    13:00 → 1  strike  (13-23 maps to 1-11)
+ *    ...
+ *    23:00 → 11 strikes
+ *
+ *  Half-hour: +1 ဝါးလက်ခုပ် (bamboo clapper) after the gong strikes
+ *
+ *  Example: 20:30 = ကွန် 8:30
+ *    [MZT chime] → [pause] → [8x gong] → [1x waing clap]
+ *    User hears: "ding-ding-ding-dong... dongx8 ... clap" → 8:30 PM
+ * ============================================================================
+ */
+
+/* Low-frequency gong for time strikes (80Hz, deeper than fault gong) */
+static int mmc_audio_hour_gong(void)
+{
+    double fund_freq = 80.0;
+    double harmonics[] = { 1.0, 2.0, 3.0, 4.0, 5.0 };
+    double harms_amp[] = { 1.0, 0.6, 0.4, 0.25, 0.15 };
+    int num_harmonics  = 5;
+    int duration_ms    = 600;
+
+    int total_frames = (g_audio_cfg.sample_rate * duration_ms) / 1000;
+    int idx = 0;
+    double vol = (double)g_audio_cfg.volume_pct / 100.0;
+
+    /* Hour gong: full volume */
+    vol *= 1.0;
+    if (vol > 1.0) vol = 1.0;
+
+    if (total_frames > MMC_MAX_PCM_BUFFER)
+        total_frames = MMC_MAX_PCM_BUFFER;
+
+    for (idx = 0; idx < total_frames; idx++) {
+        double t = (double)idx / (double)g_audio_cfg.sample_rate;
+        double wave = 0.0;
+        int h;
+
+        for (h = 0; h < num_harmonics; h++) {
+            double freq = fund_freq * harmonics[h];
+            double sine = mmc_sine(MMC_TWO_PI * freq * t);
+            double decay = 1.0 - t / (double)duration_ms;
+            if (decay < 0.0) decay = 0.0;
+            double exp_d = 1.0 - decay;
+            exp_d = exp_d * exp_d;
+            decay = 1.0 - exp_d;
+            wave += sine * harms_amp[h] * decay;
+        }
+
+        /* Sharp 3ms attack */
+        int attack_frames = (g_audio_cfg.sample_rate * 3) / 1000;
+        double attack = 1.0;
+        if (idx < attack_frames) attack = (double)idx / (double)attack_frames;
+
+        double norm = wave / 2.4;
+        double sample = norm * attack * vol;
+        int32_t raw = (int32_t)(sample * MMC_MAX_VOLUME);
+        int16_t pcm;
+        if (raw >  MMC_MAX_VOLUME) raw =  MMC_MAX_VOLUME;
+        if (raw < -MMC_MAX_VOLUME) raw = -MMC_MAX_VOLUME;
+        pcm = (int16_t)raw;
+        g_pcm_buffer[idx] = pcm;
+    }
+
+    pcm_write(g_pcm_buffer, idx, duration_ms);
+    return idx;
+}
+
+/*
+ * mmc_audio_announce_time  -  အချိန်ပြောခြင်း (Tell Current Time)
+ *
+ * Plays: [MZT chime] → [pause] → [N hour gongs] → [optional half-hour clap]
+ *
+ * Parameters:
+ *   hour      - Current hour (0-23)
+ *   minute    - Current minute (0-59)
+ *
+ * Returns: 0 on success
+ */
+int mmc_audio_announce_time(int hour, int minute)
+{
+    int i;
+    int strikes;
+    int is_half = 0;
+
+    if (!g_audio_cfg.enabled || !g_audio_initialized)
+        return -1;
+
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59)
+        return -1;
+
+    /* Determine 12-hour strikes */
+    if (hour == 0 || hour == 12) {
+        strikes = 12;
+    } else if (hour > 12) {
+        strikes = hour - 12;
+    } else {
+        strikes = hour;
+    }
+
+    /* Check for half-hour (30-59 minutes) */
+    if (minute >= 30) {
+        is_half = 1;
+    }
+
+    /* Step 1: Play MZT identification chime */
+    printf("  [MZT] မြန်မာစံတော်ချိန် chime...\n");
+    mmc_audio_sain_chime();
+
+    /* Step 2: Pause before hour strikes */
+    usleep(800 * 1000);
+
+    /* Step 3: Hour gong strikes */
+    printf("  [%d strike%s] ", strikes, strikes == 1 ? "" : "s");
+    for (i = 0; i < strikes; i++) {
+        mmc_audio_hour_gong();
+        if (i < strikes - 1) {
+            usleep(600 * 1000);  /* 600ms between strikes */
+        }
+        printf(".");
+    }
+    printf("\n");
+
+    /* Step 4: Half-hour indicator */
+    if (is_half) {
+        usleep(500 * 1000);
+        printf("  [half-hour] ဝါးလက်ခုပ်...\n");
+        mmc_audio_waing_clap();
+    }
+
+    /* Step 5: Print time in Myanmar */
+    const char *period = (hour < 12) ? "မနက်" : (hour < 18) ? "ညနေ" : "ကွန်";
+    int h12 = strikes;
+    printf("  => %s %d နာရီ%s%s\n",
+           period, h12,
+           is_half ? " ၀၃၀" : "",
+           is_half ? " မိနစ်" : "");
+
+    return 0;
+}
+
+/*
+ * mmc_audio_clock_loop  -  နောက်ဆုံးအချိန်ပြောခြင်း (Continuous Clock)
+ *
+ * Calls mmc_audio_announce_time with the current system time.
+ * Designed to be called from main() or a timer loop.
+ */
+int mmc_audio_clock_loop(void)
+{
+    time_t now;
+    struct tm *tm_info;
+
+    time(&now);
+
+    /* Use Myanmar timezone if available, else UTC+6:30 */
+    #ifdef _DEFAULT_SOURCE
+    setenv("TZ", "Asia/Yangon", 1);
+    tzset();
+    #endif
+
+    tm_info = localtime(&now);
+
+    return mmc_audio_announce_time(tm_info->tm_hour, tm_info->tm_min);
 }
 
 /* ============================================================================

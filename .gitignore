@@ -21,3 +21,8 @@ Thumbs.db
 .venv/
 venv/
 env/
+
+# Compiled binaries (keep source, exclude executables)
+selfhosted/mmc_clock
+selfhosted/nyanlin_diag
+selfhosted/nyanlin_repair_v1

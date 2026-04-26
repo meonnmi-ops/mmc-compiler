@@ -92,6 +92,11 @@ ${BOLD}PHASE 5: HARDWARE INTELLIGENCE DIAGNOSTIC SUITE${RESET}
     $(basename "$0") diag-run         Build and run nyanlin_diag
     $(basename "$0") bridge-test      Test ia_bridge.c standalone
 
+${BOLD}MYANMAR STANDARD TIME CLOCK${RESET}
+    $(basename "$0") clock            Build mmc_clock binary
+    $(basename "$0") clock-run        Announce current time once
+    $(basename "$0") clock-test HH MM  Test with specific time (e.g. 20 30)
+
 ${BOLD}EXAMPLES${RESET}
     $(basename "$0") v5-build          # Phase 5: full build + audio
     $(basename "$0") v5-run           # Run Phase 5 diagnostics
@@ -536,6 +541,69 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Myanmar Standard Time Clock
+# ---------------------------------------------------------------------------
+
+cmd_clock_build() {
+    local CLOCK_C="${SELFHOSTED_DIR}/mmc_clock.c"
+    local BRIDGE_C="${SELFHOSTED_DIR}/ia_bridge.c"
+    local AUDIO_C="${SELFHOSTED_DIR}/ia_audio.c"
+    local CLOCK_BIN="${SELFHOSTED_DIR}/mmc_clock"
+
+    require_file "${CLOCK_C}"
+    require_file "${BRIDGE_C}"
+    require_file "${AUDIO_C}"
+
+    info "=== Myanmar Standard Time Clock Build ==="
+    echo ""
+
+    if command -v gcc &>/dev/null; then
+        gcc -std=c99 -O2 -Wall -Wno-unused-function \
+            -DMMC_CLOCK_MAIN -I "${SELFHOSTED_DIR}" \
+            -o "${CLOCK_BIN}" "${CLOCK_C}" "${BRIDGE_C}" "${AUDIO_C}" -lm 2>&1
+        local gcc_rc=$?
+        if [[ ${gcc_rc} -eq 0 ]]; then
+            ok "Clock binary compiled: ${CLOCK_BIN}"
+            ls -lh "${CLOCK_BIN}" 2>/dev/null || true
+        else
+            error "GCC compilation failed (exit code ${gcc_rc})"
+            return 1
+        fi
+    else
+        error "GCC not found"
+        return 1
+    fi
+
+    echo ""
+    ok "=== Clock Build Complete ==="
+    info "Binary: ${CLOCK_BIN}"
+    info "Run:   ${CLOCK_BIN}           (current time)"
+    info "Test:   ${CLOCK_BIN} 20 30    (8:30 PM)"
+    info "Loop:   ${CLOCK_BIN} --loop     (hourly)"
+    echo ""
+}
+
+cmd_clock_run() {
+    local CLOCK_BIN="${SELFHOSTED_DIR}/mmc_clock"
+    if [[ ! -f "${CLOCK_BIN}" ]]; then
+        cmd_clock_build
+    fi
+    if [[ -f "${CLOCK_BIN}" ]]; then
+        "${CLOCK_BIN}"
+    fi
+}
+
+cmd_clock_test() {
+    local CLOCK_BIN="${SELFHOSTED_DIR}/mmc_clock"
+    if [[ ! -f "${CLOCK_BIN}" ]]; then
+        cmd_clock_build
+    fi
+    if [[ -f "${CLOCK_BIN}" ]]; then
+        "${CLOCK_BIN}" "${2:-}" "${3:-}"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Main dispatcher
 # ---------------------------------------------------------------------------
 main() {
@@ -612,6 +680,15 @@ main() {
             ;;
         bridge-test)
             cmd_bridge_test
+            ;;
+        clock)
+            cmd_clock_build
+            ;;
+        clock-run)
+            cmd_clock_run
+            ;;
+        clock-test)
+            cmd_clock_test "${2:-}" "${3:-}"
             ;;
         version|--version|-v)
             cmd_version
