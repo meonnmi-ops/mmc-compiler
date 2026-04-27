@@ -192,13 +192,11 @@ case "${1:-}" in
 
     stop)
         if [ -f "$PID_FILE" ]; then
-            local pid
-            pid=$(cat "$PID_FILE")
-            if kill -0 "$pid" 2>/dev/null; then
-                kill "$pid" 2>/dev/null
+            _pid=$(cat "$PID_FILE")
+            if kill -0 "$_pid" 2>/dev/null; then
+                kill "$_pid" 2>/dev/null
                 sleep 1
-                # Force kill if still running
-                kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+                kill -0 "$_pid" 2>/dev/null && kill -9 "$_pid" 2>/dev/null
             fi
             rm -f "$PID_FILE"
             echo -e "${GREEN}🛑 MMC Daemon stopped${NC}"
