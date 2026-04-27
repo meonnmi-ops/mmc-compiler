@@ -3,7 +3,7 @@
 # Phase 6.2 — 3-Agent Chain Reaction Alarm Architecture
 # Monitor Agent → Analyzer Agent → Responder Agent
 # ============================================================
-# Author: #TheBrainMaster #AMOMASTER #BrainMaster #Genius
+# Author: MyanOS Project
 # Project: MyanOS MMC Compiler — Phase 6
 # Date: 2026-04-26
 # ============================================================
@@ -563,16 +563,16 @@
 # ============================================================
 
 ပစ္စည်းတိုင်း __name__ == "__mmc_main__":
-  မျက် Erickson = နုတ် len(စာရင်း_အမျိုးအစား) > 1 နုတ် စာရင်း_အမျိုးအစား[1]:
-    မျက် Erickson = စာရင်း_အမျိုးအစား[1]
+  လုပ်ဆောင်စဉ် = နုတ် len(စာရင်း_အမျိုးအစား) > 1 နုတ် စာရင်း_အမျိုးအစား[1]:
+    လုပ်ဆောင်စဉ် = စာရင်း_အမျိုးအစား[1]
 
   ထုတ်ခြင်း("=== MMC Sequential Alarm System v1.0 ===")
   ထုတ်ခြင်း("Phase 6.2 — 3-Agent Chain Reaction Architecture")
   ထုတ်ခြင်း("")
 
-  နုတ် မျက် Erickson == "test":
+  နုတ် လုပ်ဆောင်စဉ် == "test":
     စမ်းသပ်_လုပ်ဆောင်ချက်()
-  နုတ် မျက် Erickson == "schedule":
+  နုတ် လုပ်ဆောင်စဉ် == "schedule":
     cycles = 1440
     နုတ် len(စာရင်း_အမျိုးအစား) > 2:
       cycles = int(စာရင်း_အမျိုးအစား[2])

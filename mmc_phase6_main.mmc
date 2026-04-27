@@ -3,7 +3,7 @@
 # Phase 6.0 — Full Integration & Validation Controller
 # Coordinates: Hardware Diag + Sequential Alarm + Git Operations
 # ============================================================
-# Author: #TheBrainMaster #AMOMASTER #BrainMaster #Genius
+# Author: MyanOS Project
 # Project: MyanOS MMC Compiler — Phase 6
 # Date: 2026-04-26
 # ============================================================
@@ -427,7 +427,7 @@
     ထုတ်ခြင်း("║    " + အချက်.ပန်း)
     ထုတ်ခြင်း("║      " + အချက်.ရည်ရွယ်ချက်)
   ထုတ်ခြင်း("╠═══════════════════════════════════════════════════╣")
-  ထုတ်ခြင်း("║  Author: #TheBrainMaster #AMOMASTER #Genius    ║")
+  ထုတ်ခြင်း("║  Author: MyanOS Project                     ║")
   ထုတ်ခြင်း("╚═══════════════════════════════════════════════════╝")
   ထုတ်ခြင်း("")
 
@@ -465,16 +465,16 @@
 # ============================================================
 
 ပစ္စည်းတိုင်း __name__ == "__mmc_main__":
-  မျက် Erickson = ""
+  လုပ်ဆောင်စဉ် = ""
   နုတ် len(စာရင်း_အမျိုးအစား) > 1:
-    မျက် Erickson = စာရင်း_အမျိုးအစား[1]
+    လုပ်ဆောင်စဉ် = စာရင်း_အမျိုးအစား[1]
 
   ထုတ်ခြင်း("=== MMC Phase 6 Orchestrator v1.0 ===")
   ထုတ်ခြင်း("")
 
-  နုတ် မျက် Erickson == "info":
+  နုတ် လုပ်ဆောင်စဉ် == "info":
     ထုတ်_ဗားရှင်း_အချက်အလက်()
-  နုတ် မျက် Erickson == "validate":
+  နုတ် လုပ်ဆောင်စဉ် == "validate":
     ထုတ်ခြင်း("Running Quick Validation...")
     result = မွမ်းမြောက်_စစ်ဆေးချက်(".")
     နုတ် result["valid"]:
@@ -485,16 +485,16 @@
       ထုတ်ခြင်း("VALIDATION: FAIL")
       ပစ္စည်းတိုင်း(result["errors"]):
         ထုတ်ခြင်း("  ERROR: " + ပစ္စည်း)
-  နုတ် မျက် Erickson == "syntax":
+  နုတ် လုပ်ဆောင်စဉ် == "syntax":
     ထုတ်ခြင်း("Running MMC Syntax Check...")
     result = အားလုံး_စစ်_MMC_syntax(".")
     ထုတ်ခြင်း("Overall: " + result["overall"])
     ပစ္စည်းတိုင်း(result["files"]):
       status = "OK" နုတ် ပစ္စည်း["valid"] နိုင် နဲ့ "FAIL"
       ထုတ်ခြင်း("  [" + status + "] " + ပစ္စည်း["file"] + " — " + str(ပစ္စည်း["line_count"]) + " lines")
-  နုတ် မျက် Erickson == "launch":
+  နုတ် လုပ်ဆောင်စဉ် == "launch":
     အပြည့်_ရလဒ် = အပြည့်_စတင်_လုပ်ဆောင်ချက်(".")
-  နုတ် မျက် Erickson == "recommend":
+  နုတ် လုပ်ဆောင်စဉ် == "recommend":
     validation = မွမ်းမြောက်_စစ်ဆေးချက်(".")
     recommendations = ထုတ်_အကြံပြုချက်များ(validation)
     ပစ္စည်းတိုင်း(အကြံပြုချက်များ):
