@@ -163,7 +163,8 @@ MM_STMT_MAP = {
 
 # Myanmar function keywords -> Python
 MM_FUNC_MAP = {
-    "ပုံနှိပ်": "print",
+    "ပုံနှိပ်": "print", "ပြုပြင်": "print", "ဖြေရှင်း": "print",
+    "ထုတ်ပေး": "print", "ဖော်ပြ": "print", "ပြော": "print",
     "မေးမြန်း": "input",
     "အရှည်": "len",
     "ဇယား": "type",
@@ -189,6 +190,15 @@ MM_FUNC_MAP = {
     "ဖန်တီး": "chr",
     "စကားလုံး": "ord",
     "ဖွင့်": "open",
+    "သို့မှတ်": "print", "ထည့်သွင်း": "insert", "ဖုတ်": "pop",
+    "ခိုင်း": "assert", "ရှင်းလင်း": "clear", "ရှင်းရှင်း": "pop",
+    "ခွဲးစမ်း": "isinstance", "စစ်ဆေး": "isinstance", "လုပ်ဆောင်": "eval",
+    "ဖွဲ့စည်း": "compile", "ဖန်ခြင်း": "repr", "ခန့်မှန်း": "hash",
+    "ပါဝင်": "add", "ရည်ရွယ်": "getattr", "ထိုင်": "setattr",
+    "ဆွဲ": "hasattr", "ခန်း": "id", "စွာ": "iter",
+    "နည်းလမ်း": "dir", "ဖော်ကျွမ်း": "format",
+    "ထိန်း": "next", "လေ့လာ": "help", "ပြောင်းလဲ": "repr",
+    "ရေး": "exec", "ကြည့်": "exec", "ပြီးပြီ": "exit",
 }
 
 # Myanmar value keywords -> Python

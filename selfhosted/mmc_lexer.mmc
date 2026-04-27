@@ -57,7 +57,9 @@ MM_STMT_KEYWORDS = {
 
 # Myanmar function keywords
 MM_FUNC_KEYWORDS = {
-    "ပုံနှိပ်": "print", "မေးမြန်း": "input", "အရှည်": "len",
+    "ပုံနှိပ်": "print", "ပြုပြင်": "print", "ဖြေရှင်း": "print",
+    "ထုတ်ပေး": "print", "ဖော်ပြ": "print", "ပြော": "print",
+    "မေးမြန်း": "input", "အရှည်": "len",
     "ဇယား": "type", "ကျပန်း": "str", "အချိန်": "int",
     "လော့ဂရစ်သမ်": "float", "တန်ဂျင့်": "bool", "စာရင်း": "list",
     "အရာဝတ္ထု": "dict", "အဘိဓာန်": "set", "ဆိုင်": "tuple",
@@ -66,6 +68,15 @@ MM_FUNC_KEYWORDS = {
     "ပြဿနာ": "map", "ကုလသိုက်": "filter", "ရောကိုင်": "enumerate",
     "ဇကာ": "zip", "မြှင့်တင်": "round", "ဖန်တီး": "chr",
     "စကားလုံး": "ord", "ဖွင့်": "open",
+    "သို့မှတ်": "print", "ထည့်သွင်း": "insert", "ဖုတ်": "pop",
+    "ခိုင်း": "assert", "ရှင်းလင်း": "clear", "ရှင်းရှင်း": "pop",
+    "ခွဲးစမ်း": "isinstance", "စစ်ဆေး": "isinstance", "လုပ်ဆောင်": "eval",
+    "ဖွဲ့စည်း": "compile", "ဖန်ခြင်း": "repr", "ခန့်မှန်း": "hash",
+    "ပါဝင်": "add", "ရည်ရွယ်": "getattr", "ထိုင်": "setattr",
+    "ဆွဲ": "hasattr", "ခန်း": "id", "စွာ": "iter",
+    "နည်းလမ်း": "dir", "ဖော်ကျွမ်း": "format",
+    "ထိန်း": "next", "လေ့လာ": "help", "ပြောင်းလဲ": "repr",
+    "ရေး": "exec", "ကြည့်": "exec", "ပြီးပြီ": "exit",
 }
 
 # Myanmar value keywords
