@@ -65,6 +65,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Include mmclib.h to get the real runtime implementations.
+ * If not available, fall back to local stubs. */
+#ifdef MMC_RUNTIME_LIB_H
+  /* mmclib.h already included via ia_bridge.h, use its implementations */
+  #define MMC_HAS_RUNTIME 1
+#else
+  #include "mmclib.h"
+  #define MMC_HAS_RUNTIME 1
+#endif
+
 /* ============================================================================
  *  IA Method Category Tags
  *
@@ -326,12 +336,11 @@ int mmc_ai_cleanup(void)
 /* ============================================================================
  *  MMC Runtime Helper Stubs
  *
- *  These functions are referenced by transpiled MMC code.  They provide
- *  minimal implementations so that standalone C programs (without Python
- *  runtime) can link and execute correctly.
- *
- *  For the Hardware Diagnostic Suite, only a subset is actually needed.
+ *  NOTE: All runtime helper functions are in mmclib.c.
+ *  These stubs are only compiled when mmclib is NOT linked (standalone mode).
  * ============================================================================ */
+
+#ifndef MMC_HAS_RUNTIME
 
 /**
  * mmc_str_len  -  String length (equivalent to strlen)
@@ -344,9 +353,6 @@ int mmc_str_len(const char *s)
 
 /**
  * mmc_arr_len  -  Placeholder for array length
- *
- * NOTE: In the full MMC runtime, this would track array sizes.
- * For the diagnostic suite, arrays are static.
  */
 int mmc_arr_len(const void *arr)
 {
@@ -356,9 +362,6 @@ int mmc_arr_len(const void *arr)
 
 /**
  * mmc_input  -  Console input stub
- *
- * In standalone binary context (non-interactive), returns an empty string.
- * For interactive use, this would read from stdin.
  */
 static char mmc_input_buf[4096];
 
@@ -369,7 +372,6 @@ const char *mmc_input(const char *prompt)
         fflush(stdout);
     }
     if (fgets(mmc_input_buf, (int)sizeof(mmc_input_buf), stdin) != NULL) {
-        /* Strip trailing newline */
         size_t len = strlen(mmc_input_buf);
         if (len > 0 && mmc_input_buf[len - 1] == '\n') {
             mmc_input_buf[len - 1] = '\0';
@@ -382,8 +384,6 @@ const char *mmc_input(const char *prompt)
 
 /**
  * mmc_sum  -  Sum of integer array elements
- *
- * For the diagnostic suite, this is used for current aggregation.
  */
 int mmc_sum(const int *arr, size_t len)
 {
@@ -395,6 +395,8 @@ int mmc_sum(const int *arr, size_t len)
     }
     return total;
 }
+
+#endif /* MMC_HAS_RUNTIME */
 
 /* ============================================================================
  *  Self-Test Entry Point (optional)
@@ -449,13 +451,8 @@ int main(void)
 
     printf("\n");
 
-    /* --- Runtime Helper Tests --- */
-    printf("mmc_str_len(\"hello\") = %d\n", mmc_str_len("hello"));
-    printf("mmc_sum(NULL, 0) = %d\n", mmc_sum(NULL, 0));
-    {
-        int vals[] = {10, 20, 30};
-        printf("mmc_sum({10,20,30}, 3) = %d\n", mmc_sum(vals, 3));
-    }
+    /* --- Runtime Helper Tests (from mmclib) --- */
+    printf("mmc_str_len(\"hello\") = %zu\n", mmc_str_len("hello"));
 
     printf("\n");
 

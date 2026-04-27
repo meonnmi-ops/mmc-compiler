@@ -121,20 +121,13 @@ int mmc_ai_cleanup(void);
 /* ============================================================================
  *  MMC Runtime Helper Stubs
  *
- *  These functions are referenced by transpiled MMC code but may not
- *  always have a full implementation.  They are provided here as weak
- *  symbols so that linking succeeds even without a full runtime library.
+ *  NOTE: Core runtime functions (mmc_str_len, mmc_arr_len, mmc_input, etc.)
+ *  are now provided by mmclib.h.  Only ia_bridge-specific stubs remain here.
+ *  Include mmclib.h before ia_bridge.h to avoid conflicts.
  * ============================================================================ */
 
-/* String helpers */
-int mmc_str_len(const char *s);
-int mmc_arr_len(const void *arr);
-
-/* Input helper (returns empty string in non-interactive contexts) */
-const char *mmc_input(const char *prompt);
-
-/* Sum helper for integer arrays */
-int mmc_sum(const int *arr, size_t len);
+/* Stub declarations for backward compatibility - implementations in mmclib.c */
+/* mmc_str_len, mmc_arr_len, mmc_input, mmc_sum are all in mmclib.c */
 
 
 #ifdef __cplusplus
