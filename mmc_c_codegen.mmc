@@ -1,0 +1,1442 @@
+# MMC C Code Generator v2.0 - Self-Hosted (Written in MMC Language)
+# Phase 4: Native C Backend (Self-Hosting Transition)
+#
+# Converts AST to compilable C99 source code.
+# Links with mmclib.c + ia_bridge.c for full runtime + IA support.
+# Compatible with GCC/Clang for cross-platform (Mobile/PC) support.
+#
+# IA Context: အေအိုင်AI — Nyanlin-AI
+# Pipeline: mmc_lexer.mmc -> mmc_parser.mmc -> mmc_c_codegen.mmc -> C99
+#
+# Compile command:
+#   gcc -std=c99 -lm -o program output.c mmclib.c ia_bridge.c
+
+# =================================================================
+# SECTION 1: C Operator Symbol Tables
+# =================================================================
+# Maps AST operator names to their C language equivalents.
+# These differ from the Python tables in key ways:
+#   - "not"  -> "!"   (not "not ")
+#   - "and"  -> "&&"  (not "and")
+#   - "or"   -> "||"  (not "or")
+#   - "Pow"  -> "pow(" (C math library function)
+#   - "FloorDiv" -> "/" with cast (C integer division)
+
+BIN_OP_SYMBOLS_C = {
+    "Add": "+",
+    "Sub": "-",
+    "Mult": "*",
+    "Div": "/",
+    "Mod": "%",
+    "Pow": "pow(",
+    "FloorDiv": "/",
+    "BitOr": "|",
+    "BitXor": "^",
+    "BitAnd": "&",
+    "LShift": "<<",
+    "RShift": ">>",
+    "MatMult": "*",
+}
+
+UNARY_OP_SYMBOLS_C = {
+    "Not": "!",
+    "Invert": "~",
+    "UAdd": "+",
+    "USub": "-",
+}
+
+COMPARE_OP_SYMBOLS_C = {
+    "Eq": "==",
+    "NotEq": "!=",
+    "Lt": "<",
+    "LtE": "<=",
+    "Gt": ">",
+    "GtE": ">=",
+    "Is": "==",
+    "IsNot": "!=",
+    "And": "&&",
+    "Or": "||",
+}
+
+# =================================================================
+# SECTION 2: Node Type Constants (mirrors mmc_codegen.mmc)
+# =================================================================
+
+NODE_PROGRAM = "Program"
+NODE_MODULE = "Module"
+NODE_FUNCTION_DEF = "FunctionDef"
+NODE_RETURN = "Return"
+NODE_ASSIGN = "Assign"
+NODE_AUG_ASSIGN = "AugAssign"
+NODE_ANN_ASSIGN = "AnnAssign"
+NODE_IF = "If"
+NODE_FOR = "For"
+NODE_WHILE = "While"
+NODE_BREAK = "Break"
+NODE_CONTINUE = "Continue"
+NODE_PASS = "Pass"
+NODE_EXPR_STMT = "Expr"
+NODE_CALL = "Call"
+NODE_IA_CALL = "IACall"
+NODE_BIN_OP = "BinOp"
+NODE_UNARY_OP = "UnaryOp"
+NODE_BOOL_OP = "BoolOp"
+NODE_COMPARE = "Compare"
+NODE_NAME = "Name"
+NODE_CONSTANT = "Constant"
+NODE_ATTRIBUTE = "Attribute"
+NODE_SUBSCRIPT = "Subscript"
+NODE_LIST = "List"
+NODE_DICT = "Dict"
+NODE_SET = "Set"
+NODE_TUPLE = "Tuple"
+NODE_FSTRING = "FString"
+NODE_JOINED_STR = "JoinedStr"
+
+# =================================================================
+# SECTION 3: Translation Tables (MMC -> C)
+# =================================================================
+# Myanmar/Python builtins mapped to C equivalents.
+
+# Built-in function translations: Python/M Myanmar name -> C equivalent
+MM_FUNC_MAP_C = {
+    "print": "printf",
+    "ပုံနှိပ်": "printf",
+    "len": "strlen",
+    "အရှည်": "strlen",
+    "int": "(int)",
+    "အချိန်": "(int)",
+    "float": "(double)",
+    "လော့ဂရစ်သမ်": "(double)",
+    "str": "(char*)",
+    "ကျပန်း": "(char*)",
+    "abs": "abs",
+    "သင်္ချာ": "abs",
+    "max": "fmax",
+    "အမြင့်ဆုံး": "fmax",
+    "min": "fmin",
+    "အနိမ့်ဆုံး": "fmin",
+    "sum": "mmc_sum",
+    "ပေါင်းလုံး": "mmc_sum",
+    "round": "round",
+    "မြှင့်တင်": "round",
+    "input": "mmc_input",
+    "မေးမြန်း": "mmc_input",
+    "open": "fopen",
+    "ဖွင့်": "fopen",
+    "range": "mmc_range",
+    "ပတ်လမ်း": "mmc_range",
+    "enumerate": "mmc_enumerate",
+    "ရောကိုင်": "mmc_enumerate",
+    "chr": "(char)",
+    "ဖန်တီး": "(char)",
+    "ord": "(int)",
+    "စကားလုံး": "(int)",
+}
+
+# Value translations: Python/Myanmar -> C literal
+MM_VALUE_MAP_C = {
+    "True": "1",
+    "False": "0",
+    "None": "NULL",
+    "true": "1",
+    "false": "0",
+    "none": "NULL",
+    "မှန်": "1",
+    "မှား": "0",
+    "ဘာမှမရှိ": "NULL",
+    "ဗလာ": "NULL",
+    "self": "self",
+    "cls": "cls",
+}
+
+# Method translations: Python/Myanmar -> C string.h equivalent
+MM_METHOD_MAP_C = {
+    "upper": "mmc_str_upper",
+    "စာလုံးကြီး": "mmc_str_upper",
+    "lower": "mmc_str_lower",
+    "စာလုံးသေး": "mmc_str_lower",
+    "strip": "mmc_str_strip",
+    "ဖြတ်": "mmc_str_strip",
+    "replace": "mmc_str_replace",
+    "အစားထိုး": "mmc_str_replace",
+    "find": "mmc_str_find",
+    "ရှာဖွေ": "mmc_str_find",
+    "split": "mmc_str_split",
+    "စာခွဲ": "mmc_str_split",
+    "isalpha": "mmc_str_isalpha",
+    "အမှန်နေ": "mmc_str_isalpha",
+    "isdigit": "mmc_str_isdigit",
+    "ဂဏန်းဖြစ်": "mmc_str_isdigit",
+    "count": "mmc_str_count",
+    "ရှိမရှိ": "mmc_str_count",
+    "format": "sprintf",
+    "ဖော်ပြ": "sprintf",
+}
+
+# =================================================================
+# SECTION 4: IA Method Mapping (C struct function-pointer calls)
+# =================================================================
+# All 18 IA methods are accessed through the __mmc_ai__ bridge struct.
+# C call pattern: __mmc_ai__.method("arg")
+
+IA_METHOD_MAP_C = {
+    "ပြောပါ": "say",
+    "say": "say",
+    "သင်ယူပါ": "learn",
+    "learn": "learn",
+    "စဉ်းစားပါ": "think",
+    "think": "think",
+    "ဖော်ပြပါ": "explain",
+    "explain": "explain",
+    "ဆက်ပါ": "connect",
+    "connect": "connect",
+    "ပြင်ဆင်ပါ": "update",
+    "update": "update",
+    "စစ်ဆေးပါ": "check",
+    "check": "check",
+    "ဖုံးပါ": "ask",
+    "ask": "ask",
+    "ရှင်းပြပါ": "describe",
+    "describe": "describe",
+    "ညွှန်ပါ": "teach",
+    "teach": "teach",
+    "ဖော်ကျားပါ": "visualize",
+    "visualize": "visualize",
+    "ဖိုးထုတ်ပါ": "generate",
+    "generate": "generate",
+    "ထုတ်ပေးပါ": "respond",
+    "respond": "respond",
+    "ခွဲခြမ်းပါ": "analyze",
+    "analyze": "analyze",
+    "တိုက်ရိုက်ပါ": "chat",
+    "chat": "chat",
+    "ဖြေရှင်းပါ": "translate",
+    "translate": "translate",
+    "စူးစိုက်ပါ": "summarize",
+    "summarize": "summarize",
+    "ဆန်ပါ": "dream",
+    "dream": "dream",
+}
+
+# =================================================================
+# SECTION 5: Myanmar Digit Conversion
+# =================================================================
+
+MYANMAR_DIGITS = {
+    "၀": "0", "၁": "1", "၂": "2", "၃": "3", "၄": "4",
+    "၅": "5", "၆": "6", "၇": "7", "၈": "8", "၉": "9",
+}
+
+# =================================================================
+# SECTION 6: C Program Template Fragments
+# =================================================================
+# Boilerplate that wraps the generated C code.
+
+C_HEADER = """\
+/*
+ * Generated by MMC C Code Generator v2.0
+ * Phase 4: Native C Backend (Self-Hosting)
+ * IA Context: အေအိုင်AI / Nyanlin-AI
+ *
+ * Compile: gcc -std=c99 -lm -o program program.c mmclib.c ia_bridge.c
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include "mmclib.h"
+#include "ia_bridge.h"
+
+/* Forward declarations */
+extern MMC_AI_Bridge __mmc_ai__;
+
+/* MMC runtime initialization */
+"""
+
+C_FOOTER = """
+/* ===== END OF GENERATED CODE ===== */
+"""
+
+# =================================================================
+# SECTION 7: MMC C Code Generator Class
+# =================================================================
+# The core class that walks an AST and emits C99 source code.
+#
+# Design: Every _gen_* method returns a STRING of C code.
+#   Statements include indentation and trailing semicolons.
+#   Expressions return the C expression string without semicolons.
+#   generate_program() wraps everything in a main() function.
+
+class MMC_C_CodeGenerator:
+    """MMC C Code Generator — Phase 4 Native Backend.
+
+    Converts AST nodes (from mmc_parser.mmc) into compilable C99
+    source code that links against ia_bridge.c for IA support.
+
+    Pipeline:
+        mmc_lexer.mmc -> mmc_parser.mmc -> mmc_c_codegen.mmc -> C99 -> GCC/Clang
+    """
+
+    def __init__(self, indent_str="    "):
+        self.indent_str = indent_str
+        self.indent_level = 0
+        self.errors = []
+        self.forward_decls = []
+        self.string_vars = []
+        self.string_var_counter = 0
+        self.needs_string_buf = False
+        self.var_types = {}
+
+    # -----------------------------------------------------------
+    # Indentation helper
+    # -----------------------------------------------------------
+
+    def _ind(self):
+        """Return the current indentation string."""
+        return self.indent_str * self.indent_level
+
+    # -----------------------------------------------------------
+    # PUBLIC API
+    # -----------------------------------------------------------
+
+    def generate_program(self, body_nodes):
+        """Generate a complete C program from a list of AST body nodes.
+
+        Produces a compilable .c file with includes, forward declarations,
+        function definitions, and a main() wrapping top-level statements.
+
+        Args:
+            body_nodes: List of AST node dicts.
+
+        Returns:
+            Complete C source code string.
+        """
+        self.indent_level = 0
+        self.errors = []
+        self.forward_decls = []
+        self.string_vars = []
+        self.string_var_counter = 0
+        self.needs_string_buf = False
+        self.var_types = {}
+
+        # First pass: collect function signatures for forward declarations
+        for node in body_nodes:
+            if node.get("type") == NODE_FUNCTION_DEF:
+                self._collect_forward_decl(node)
+
+        # Second pass: separate user functions from top-level statements
+        func_nodes = []
+        top_level_stmts = []
+        for node in body_nodes:
+            if node.get("type") == NODE_FUNCTION_DEF:
+                func_nodes.append(node)
+            else:
+                top_level_stmts.append(node)
+
+        # Build C program
+        lines = []
+        lines.append(C_HEADER.rstrip("\n"))
+
+        # Forward declarations for all user-defined functions
+        for decl in self.forward_decls:
+            lines.append(decl + ";")
+
+        if self.forward_decls:
+            lines.append("")
+
+        # String buffer helper if needed
+        if self.needs_string_buf:
+            lines.append("/* String concatenation buffer */")
+            lines.append("static char __mmc_str_buf[65536];")
+            lines.append("")
+
+        # Generate user-defined functions
+        for func_node in func_nodes:
+            func_code = self._gen_function(func_node)
+            lines.append(func_code)
+            lines.append("")
+
+        # Generate main() function wrapping top-level statements
+        lines.append("int main(int argc, char *argv[]) {")
+        self.indent_level = 1
+        lines.append(self._ind() + "mmc_runtime_init();")
+        lines.append(self._ind() + "mmc_ai_init();")
+
+        # Declare local variables at top of main scope (C89 compat)
+        main_local_vars = self._collect_local_vars(top_level_stmts)
+        for vname, vtype in main_local_vars.items():
+            lines.append(self._ind() + vtype + " " + vname + " = 0;")
+        if main_local_vars:
+            lines.append("")
+
+        for stmt in top_level_stmts:
+            stmt_code = self._gen_node(stmt)
+            if stmt_code is not None and stmt_code != "":
+                lines.append(stmt_code)
+
+        lines.append("")
+        lines.append(self._ind() + "mmc_ai_cleanup();")
+        lines.append(self._ind() + "mmc_runtime_cleanup();")
+        lines.append(self._ind() + "return 0;")
+        lines.append("}")
+        lines.append(C_FOOTER.rstrip("\n"))
+
+        self.indent_level = 0
+        return "\n".join(lines)
+
+    # -----------------------------------------------------------
+    # Node dispatch
+    # -----------------------------------------------------------
+
+    def _gen_node(self, node):
+        """Main dispatch: route AST node to the appropriate handler.
+
+        Returns a string of C code (with indentation and semicolons).
+        """
+        if node is None:
+            return ""
+        ntype = node.get("type", "")
+
+        if ntype == NODE_FUNCTION_DEF:
+            return self._gen_function(node)
+        if ntype == NODE_RETURN:
+            return self._gen_return(node)
+        if ntype == NODE_ASSIGN:
+            return self._gen_assign(node)
+        if ntype == NODE_AUG_ASSIGN:
+            return self._gen_aug_assign(node)
+        if ntype == NODE_ANN_ASSIGN:
+            return self._gen_variable_decl(node)
+        if ntype == NODE_IF:
+            return self._gen_if(node)
+        if ntype == NODE_FOR:
+            return self._gen_for(node)
+        if ntype == NODE_WHILE:
+            return self._gen_while(node)
+        if ntype == NODE_BREAK:
+            return self._ind() + "break;"
+        if ntype == NODE_CONTINUE:
+            return self._ind() + "continue;"
+        if ntype == NODE_PASS:
+            return self._ind() + "/* pass */"
+        if ntype == NODE_EXPR_STMT:
+            return self._gen_expr_stmt(node)
+
+        # Fallback: treat as expression statement
+        return self._ind() + self._gen_expr(node) + ";"
+
+    # -----------------------------------------------------------
+    # Expression generator (recursive core)
+    # -----------------------------------------------------------
+
+    def _gen_expr(self, node):
+        """Recursively generate a C expression string from an AST node.
+
+        Does NOT add semicolons or indentation.
+        Returns the raw C expression string.
+        """
+        if node is None:
+            return "0"
+
+        ntype = node.get("type", "")
+
+        if ntype == NODE_CONSTANT:
+            return self._gen_constant(node)
+        if ntype == NODE_NAME:
+            return self._gen_name(node)
+        if ntype == NODE_BIN_OP:
+            return self._gen_binop(node)
+        if ntype == NODE_UNARY_OP:
+            return self._gen_unaryop(node)
+        if ntype == NODE_BOOL_OP:
+            return self._gen_boolop(node)
+        if ntype == NODE_COMPARE:
+            return self._gen_compare(node)
+        if ntype == NODE_CALL:
+            return self._gen_call(node)
+        if ntype == NODE_IA_CALL:
+            return self._gen_ia_call(node)
+        if ntype == NODE_ATTRIBUTE:
+            return self._gen_attribute(node)
+        if ntype == NODE_SUBSCRIPT:
+            return self._gen_subscript(node)
+        if ntype == NODE_LIST:
+            return self._gen_list(node)
+        if ntype == NODE_FSTRING:
+            return node.get("value", '""')
+        if ntype == NODE_JOINED_STR:
+            return self._gen_joined_str(node)
+
+        # Fallback
+        if "value" in node:
+            v = node["value"]
+            if isinstance(v, str):
+                return '"' + v + '"'
+            return str(v)
+        return "0"
+
+    # -----------------------------------------------------------
+    # C type inference
+    # -----------------------------------------------------------
+
+    def _c_type(self, node):
+        """Infer a C type string from an AST node.
+
+        Uses 'int' as the default. Returns 'double' for float
+        operations, 'char*' for strings, 'void' for no value.
+        """
+        if node is None:
+            return "int"
+
+        ntype = node.get("type", "")
+
+        if ntype == NODE_CONSTANT:
+            val = node.get("value", 0)
+            if isinstance(val, float):
+                return "double"
+            if isinstance(val, str):
+                return "char*"
+            if val is None:
+                return "void*"
+            return "int"
+
+        if ntype == NODE_BIN_OP:
+            op = node.get("op", "")
+            if op in ("Div", "Pow"):
+                # Check if either operand is float
+                left_type = self._c_type(node.get("left"))
+                right_type = self._c_type(node.get("right"))
+                if "double" in left_type or "double" in right_type:
+                    return "double"
+                if op == "Div":
+                    return "int"
+                return "double"
+            if op == "FloorDiv":
+                return "int"
+            return "int"
+
+        if ntype == NODE_CALL:
+            func_node = node.get("func", {})
+            fname = ""
+            if func_node.get("type") == NODE_NAME:
+                fname = func_node.get("id", "")
+            if fname in ("float", "လော့ဂရစ်သမ်"):
+                return "double"
+            if fname in ("int", "အချိန်"):
+                return "int"
+            if fname in ("str", "ကျပန်း"):
+                return "char*"
+            if fname in ("input", "မေးမြန်း"):
+                return "char*"
+            if fname in ("len", "အရှည်"):
+                return "int"
+            return "int"
+
+        if ntype == NODE_NAME:
+            name = node.get("id", "")
+            if name in self.var_types:
+                return self.var_types[name]
+            return "int"
+
+        return "int"
+
+    # -----------------------------------------------------------
+    # Statement generators
+    # -----------------------------------------------------------
+
+    def _gen_function(self, node):
+        """Generate a C function definition.
+
+        Produces a forward declaration and a full function body.
+        For functions that cannot be statically typed, defaults to int return.
+        """
+        name = self._translate_name(node.get("name", "mmc_anon"))
+        params = node.get("params", [])
+        body = node.get("body", [])
+        ret_type_node = node.get("return_type", None)
+
+        # Determine return type
+        if ret_type_node is not None:
+            ret_type = self._infer_type_from_annotation(ret_type_node)
+        else:
+            ret_type = "int"
+
+        # Build parameter list with C types
+        param_strs = []
+        for p in params:
+            pname = self._translate_name(p.get("name", ""))
+            ptype = "int"
+            ann = p.get("annotation", None)
+            if ann is not None:
+                ptype = self._infer_type_from_annotation(ann)
+            param_strs.append(ptype + " " + pname)
+
+        param_str = ", ".join(param_strs)
+        if param_str == "":
+            param_str = "void"
+
+        # Function signature
+        header = ret_type + " " + name + "(" + param_str + ")"
+
+        # Forward declaration (already collected, but emit inline too)
+        decl = header + ";"
+        if decl not in self.forward_decls:
+            self.forward_decls.append(decl)
+
+        # Build body with indentation
+        old_level = self.indent_level
+        self.indent_level = 0
+        lines = []
+        lines.append(header + " {")
+
+        self.indent_level = 1
+
+        # Declare local variables at top of function scope (C89 compat)
+        local_vars = self._collect_local_vars(body)
+        for vname, vtype in local_vars.items():
+            lines.append(self._ind() + vtype + " " + vname + " = 0;")
+
+        if local_vars:
+            lines.append("")
+
+        # Generate body statements
+        for stmt in body:
+            code = self._gen_node(stmt)
+            if code is not None and code != "":
+                lines.append(code)
+
+        lines.append("}")
+        self.indent_level = old_level
+        return "\n".join(lines)
+
+    def _collect_forward_decl(self, node):
+        """Collect a function forward declaration for the header."""
+        name = self._translate_name(node.get("name", "mmc_anon"))
+        params = node.get("params", [])
+        ret_type_node = node.get("return_type", None)
+
+        if ret_type_node is not None:
+            ret_type = self._infer_type_from_annotation(ret_type_node)
+        else:
+            ret_type = "int"
+
+        param_strs = []
+        for p in params:
+            pname = self._translate_name(p.get("name", ""))
+            ptype = "int"
+            ann = p.get("annotation", None)
+            if ann is not None:
+                ptype = self._infer_type_from_annotation(ann)
+            param_strs.append(ptype + " " + pname)
+
+        param_str = ", ".join(param_strs)
+        if param_str == "":
+            param_str = "void"
+
+        decl = ret_type + " " + name + "(" + param_str + ")"
+        if decl not in self.forward_decls:
+            self.forward_decls.append(decl)
+
+    def _collect_local_vars(self, body):
+        """Scan a function body for variable assignments to declare at top.
+
+        Returns dict of {var_name: c_type}.
+        """
+        local_vars = {}
+        self._scan_assigns(body, local_vars)
+        return local_vars
+
+    def _scan_assigns(self, nodes, local_vars):
+        """Recursively scan nodes for variable assignments."""
+        for node in nodes:
+            ntype = node.get("type", "")
+            if ntype == NODE_ASSIGN:
+                targets = node.get("targets", [])
+                value = node.get("value", None)
+                for t in targets:
+                    if t.get("type") == NODE_NAME:
+                        vname = self._translate_name(t.get("id", ""))
+                        if vname not in local_vars:
+                            vtype = self._c_type(value) if value else "int"
+                            local_vars[vname] = vtype
+            elif ntype == NODE_FOR:
+                target = node.get("target", None)
+                if target and target.get("type") == NODE_NAME:
+                    vname = self._translate_name(target.get("id", ""))
+                    local_vars[vname] = "int"
+                iter_node = node.get("iter", None)
+                # range loop: declare counter as int
+                if iter_node and iter_node.get("type") == NODE_CALL:
+                    func = iter_node.get("func", {})
+                    if func.get("type") == NODE_NAME:
+                        fname = func.get("id", "")
+                        if fname in ("range", "ပတ်လမ်း"):
+                            if target and target.get("type") == NODE_NAME:
+                                local_vars[self._translate_name(target.get("id", ""))] = "int"
+                for_body = node.get("body", [])
+                self._scan_assigns(for_body, local_vars)
+            elif ntype == NODE_IF:
+                if_body = node.get("body", [])
+                self._scan_assigns(if_body, local_vars)
+                else_body = node.get("orelse", [])
+                self._scan_assigns(else_body, local_vars)
+            elif ntype == NODE_WHILE:
+                while_body = node.get("body", [])
+                self._scan_assigns(while_body, local_vars)
+
+    def _infer_type_from_annotation(self, ann_node):
+        """Convert a type annotation AST node to a C type string."""
+        if ann_node is None:
+            return "int"
+        ntype = ann_node.get("type", "")
+        if ntype == NODE_NAME:
+            name = ann_node.get("id", "")
+            type_map = {
+                "int": "int", "အချိန်": "int",
+                "float": "double", "လော့ဂရစ်သမ်": "double",
+                "str": "char*", "စာသား": "char*",
+                "bool": "int", "တန်ဂျင့်": "int",
+                "void": "void", "None": "void",
+                "မပါ": "void",
+                "double": "double",
+                "char": "char",
+                "long": "long",
+                "size_t": "size_t",
+            }
+            return type_map.get(name, "int")
+        if ntype == NODE_CONSTANT:
+            val = ann_node.get("value", "")
+            if isinstance(val, str):
+                return "char*"
+            return "int"
+        return "int"
+
+    def _gen_variable_decl(self, node):
+        """Generate a typed variable declaration from an annotated assignment.
+
+        Pattern: int x = 5;  or  char* name = "hello";
+        """
+        target = node.get("target", {})
+        value = node.get("value", None)
+        annotation = node.get("annotation", None)
+
+        if target.get("type") != NODE_NAME:
+            return self._gen_assign(node)
+
+        vname = self._translate_name(target.get("id", "mmc_tmp"))
+        if annotation is not None:
+            vtype = self._infer_type_from_annotation(annotation)
+        elif value is not None:
+            vtype = self._c_type(value)
+        else:
+            vtype = "int"
+
+        self.var_types[vname] = vtype
+
+        if value is not None:
+            val_str = self._gen_expr(value)
+            return self._ind() + vtype + " " + vname + " = " + val_str + ";"
+        else:
+            return self._ind() + vtype + " " + vname + " = 0;"
+
+    def _gen_if(self, node):
+        """Generate C if / else if / else chain.
+
+        Handles recursive elif by checking if orelse contains a single If node.
+        """
+        test = self._gen_expr(node["test"])
+        result = self._ind() + "if (" + test + ") {"
+
+        old_level = self.indent_level
+        self.indent_level += 1
+        body_lines = []
+        for stmt in node.get("body", []):
+            code = self._gen_node(stmt)
+            if code is not None and code != "":
+                body_lines.append(code)
+        self.indent_level = old_level
+
+        result = result + "\n" + "\n".join(body_lines)
+
+        orelse = node.get("orelse", [])
+        if len(orelse) > 0:
+            # Check for elif (single If node in orelse)
+            if len(orelse) == 1 and orelse[0].get("type") == NODE_IF:
+                elif_node = orelse[0]
+                elif_test = self._gen_expr(elif_node["test"])
+                result = result + "\n" + self._ind() + "} else if (" + elif_test + ") {"
+
+                self.indent_level += 1
+                elif_body_lines = []
+                for stmt in elif_node.get("body", []):
+                    code = self._gen_node(stmt)
+                    if code is not None and code != "":
+                        elif_body_lines.append(code)
+                self.indent_level = old_level
+
+                result = result + "\n" + "\n".join(elif_body_lines)
+
+                # Recurse for further elif/else
+                elif_orelse = elif_node.get("orelse", [])
+                if len(elif_orelse) > 0:
+                    if len(elif_orelse) == 1 and elif_orelse[0].get("type") == NODE_IF:
+                        # Continue the elif chain
+                        remaining_code = self._gen_else_chain(elif_orelse, old_level)
+                        result = result + remaining_code
+                    else:
+                        result = result + "\n" + self._ind() + "} else {"
+                        self.indent_level += 1
+                        else_lines = []
+                        for stmt in elif_orelse:
+                            code = self._gen_node(stmt)
+                            if code is not None and code != "":
+                                else_lines.append(code)
+                        self.indent_level = old_level
+                        result = result + "\n" + "\n".join(else_lines)
+                        result = result + "\n" + self._ind() + "}"
+                else:
+                    result = result + "\n" + self._ind() + "}"
+            else:
+                result = result + "\n" + self._ind() + "} else {"
+                self.indent_level += 1
+                else_lines = []
+                for stmt in orelse:
+                    code = self._gen_node(stmt)
+                    if code is not None and code != "":
+                        else_lines.append(code)
+                self.indent_level = old_level
+                result = result + "\n" + "\n".join(else_lines)
+                result = result + "\n" + self._ind() + "}"
+        else:
+            result = result + "\n" + self._ind() + "}"
+
+        return result
+
+    def _gen_else_chain(self, orelse, base_level):
+        """Recursively generate else-if / else chain for nested if nodes."""
+        result = ""
+        if len(orelse) == 1 and orelse[0].get("type") == NODE_IF:
+            node = orelse[0]
+            test = self._gen_expr(node["test"])
+            result = result + "\n" + self._ind() + "} else if (" + test + ") {"
+
+            self.indent_level += 1
+            body_lines = []
+            for stmt in node.get("body", []):
+                code = self._gen_node(stmt)
+                if code is not None and code != "":
+                    body_lines.append(code)
+            self.indent_level = base_level
+
+            result = result + "\n" + "\n".join(body_lines)
+
+            inner_orelse = node.get("orelse", [])
+            if len(inner_orelse) > 0:
+                result = result + self._gen_else_chain(inner_orelse, base_level)
+            else:
+                result = result + "\n" + self._ind() + "}"
+        else:
+            result = result + "\n" + self._ind() + "} else {"
+            self.indent_level += 1
+            else_lines = []
+            for stmt in orelse:
+                code = self._gen_node(stmt)
+                if code is not None and code != "":
+                    else_lines.append(code)
+            self.indent_level = base_level
+            result = result + "\n" + "\n".join(else_lines)
+            result = result + "\n" + self._ind() + "}"
+        return result
+
+    def _gen_for(self, node):
+        """Generate a C for loop.
+
+        For range(n):       for (int i = 0; i < n; i++) { ... }
+        For range(a, b):    for (int i = a; i < b; i++) { ... }
+        For range(a, b, s): for (int i = a; i < b; i += s) { ... }
+        """
+        target = node.get("target", None)
+        iter_node = node.get("iter", None)
+        body = node.get("body", [])
+
+        # Check if iterating over range()
+        if iter_node and iter_node.get("type") == NODE_CALL:
+            func = iter_node.get("func", {})
+            if func.get("type") == NODE_NAME:
+                fname = func.get("id", "")
+                if fname in ("range", "ပတ်လမ်း"):
+                    return self._gen_for_range(node)
+
+        # Generic for loop (iterate over array)
+        if target:
+            target_name = self._gen_expr(target)
+        else:
+            target_name = "mmc_iter_i"
+
+        iter_expr = self._gen_expr(iter_node) if iter_node else "0"
+
+        # Generate: for (int i = 0; i < len(iter); i++) { type item = iter[i]; ... }
+        self.string_var_counter += 1
+        idx_name = "mmc_idx_" + str(self.string_var_counter)
+
+        result = self._ind() + "for (int " + idx_name + " = 0; "
+        result = result + idx_name + " < mmc_arr_len(" + iter_expr + "); "
+        result = result + idx_name + "++) {"
+
+        old_level = self.indent_level
+        self.indent_level += 1
+        lines = [result]
+        if target:
+            item_type = "int"
+            lines.append(self._ind() + item_type + " " + target_name
+                         + " = " + iter_expr + "[" + idx_name + "];")
+        for stmt in body:
+            code = self._gen_node(stmt)
+            if code is not None and code != "":
+                lines.append(code)
+        self.indent_level = old_level
+        lines.append(self._ind() + "}")
+        return "\n".join(lines)
+
+    def _gen_for_range(self, node):
+        """Generate a C for loop for range() calls.
+
+        range(stop)        -> for (int i = 0; i < stop; i++)
+        range(start, stop) -> for (int i = start; i < stop; i++)
+        range(start, stop, step) -> for (int i = start; i < stop; i += step)
+        """
+        target = node.get("target", None)
+        args = node.get("iter", {}).get("args", [])
+
+        if target:
+            target_name = self._translate_name(target.get("id", "i"))
+        else:
+            target_name = "i"
+
+        if len(args) == 1:
+            stop = self._gen_expr(args[0])
+            init = "int " + target_name + " = 0"
+            cond = target_name + " < " + stop
+            step = target_name + "++"
+        elif len(args) == 2:
+            start = self._gen_expr(args[0])
+            stop = self._gen_expr(args[1])
+            init = "int " + target_name + " = " + start
+            cond = target_name + " < " + stop
+            step = target_name + "++"
+        elif len(args) >= 3:
+            start = self._gen_expr(args[0])
+            stop = self._gen_expr(args[1])
+            step_val = self._gen_expr(args[2])
+            init = "int " + target_name + " = " + start
+            cond = target_name + " < " + stop
+            step = target_name + " += " + step_val
+        else:
+            return self._ind() + "/* empty range() */"
+
+        result = self._ind() + "for (" + init + "; " + cond + "; " + step + ") {"
+
+        old_level = self.indent_level
+        self.indent_level += 1
+        lines = [result]
+        for stmt in node.get("body", []):
+            code = self._gen_node(stmt)
+            if code is not None and code != "":
+                lines.append(code)
+        self.indent_level = old_level
+        lines.append(self._ind() + "}")
+        return "\n".join(lines)
+
+    def _gen_while(self, node):
+        """Generate a C while loop."""
+        test = self._gen_expr(node["test"])
+        result = self._ind() + "while (" + test + ") {"
+
+        old_level = self.indent_level
+        self.indent_level += 1
+        lines = [result]
+        for stmt in node.get("body", []):
+            code = self._gen_node(stmt)
+            if code is not None and code != "":
+                lines.append(code)
+        self.indent_level = old_level
+        lines.append(self._ind() + "}")
+        return "\n".join(lines)
+
+    def _gen_return(self, node):
+        """Generate a C return statement."""
+        value = node.get("value", None)
+        if value is None:
+            return self._ind() + "return;"
+        return self._ind() + "return " + self._gen_expr(value) + ";"
+
+    def _gen_print(self, args):
+        """Generate a printf() call for print() arguments.
+
+        Uses %d for int, %s for string, %f for double.
+        Multiple args are joined with spaces: printf("%d %s\\n", a, b);
+        """
+        if len(args) == 0:
+            return self._ind() + 'printf("\\n");'
+
+        fmt_parts = []
+        val_parts = []
+
+        for arg in args:
+            c_type = self._c_type(arg)
+            expr_str = self._gen_expr(arg)
+            if "char" in c_type:
+                fmt_parts.append("%s")
+                val_parts.append(expr_str)
+            elif "double" in c_type:
+                fmt_parts.append("%f")
+                val_parts.append(expr_str)
+            else:
+                fmt_parts.append("%d")
+                val_parts.append(expr_str)
+
+        fmt_str = '"' + " ".join(fmt_parts) + "\\n" + '"'
+        if val_parts:
+            args_str = ", " + ", ".join(val_parts)
+        else:
+            args_str = ""
+        return self._ind() + "printf(" + fmt_str + args_str + ");"
+
+    def _gen_expr_stmt(self, node):
+        """Generate an expression as a statement (with semicolon)."""
+        value = node.get("value", None)
+        if value is None:
+            return ""
+
+        # Detect print() calls
+        if value.get("type") == NODE_CALL:
+            func = value.get("func", {})
+            if func.get("type") == NODE_NAME:
+                fname = func.get("id", "")
+                if fname in ("print", "ပုံနှိပ်"):
+                    args = value.get("args", [])
+                    return self._gen_print(args)
+
+        expr_str = self._gen_expr(value)
+        return self._ind() + expr_str + ";"
+
+    # -----------------------------------------------------------
+    # Expression generators
+    # -----------------------------------------------------------
+
+    def _gen_constant(self, node):
+        """Generate a C literal from a Constant AST node.
+
+        Maps: True -> 1, False -> 0, None -> NULL, strings -> "..."
+        Converts Myanmar digits to Arabic.
+        """
+        value = node.get("value", None)
+
+        if value is None:
+            return "NULL"
+
+        if isinstance(value, bool):
+            return "1" if value else "0"
+
+        if isinstance(value, str):
+            # Check if it's a value keyword
+            if value in MM_VALUE_MAP_C:
+                return MM_VALUE_MAP_C[value]
+            # Check if already quoted
+            if len(value) >= 2 and ((value[0] == '"' and value[-1] == '"')
+                                     or (value[0] == "'" and value[-1] == "'")):
+                return self._convert_myanmar_digits(value)
+            # Escape and quote
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            converted = self._convert_myanmar_digits(escaped)
+            return '"' + converted + '"'
+
+        # Numeric
+        num_str = str(value)
+        return self._convert_myanmar_digits(num_str)
+
+    def _gen_name(self, node):
+        """Generate a C identifier from a Name AST node.
+
+        Translates Myanmar identifiers and keywords to safe C names.
+        """
+        name = node.get("id", "")
+        return self._translate_name(name)
+
+    def _gen_binop(self, node):
+        """Generate a C binary operation.
+
+        Special handling for Pow -> pow(left, right) with closing paren.
+        String concatenation with + generates sprintf/strcat.
+        """
+        left = node.get("left")
+        right = node.get("right")
+        op = node.get("op", "Add")
+
+        left_str = self._gen_expr(left)
+        right_str = self._gen_expr(right)
+        op_sym = BIN_OP_SYMBOLS_C.get(op, "+")
+
+        # Special: Pow -> pow(left, right)
+        if op == "Pow":
+            return "pow(" + left_str + ", " + right_str + ")"
+
+        # Detect string concatenation with +
+        if op == "Add":
+            left_type = self._c_type(left)
+            right_type = self._c_type(right)
+            if "char" in left_type or "char" in right_type:
+                self.needs_string_buf = True
+                self.string_var_counter += 1
+                tmp = "mmc_sc_" + str(self.string_var_counter)
+                return 'sprintf(' + tmp + ', "%s%s", ' + left_str + ", " + right_str + ")"
+
+        return "(" + left_str + " " + op_sym + " " + right_str + ")"
+
+    def _gen_unaryop(self, node):
+        """Generate a C unary operation."""
+        operand = self._gen_expr(node.get("operand"))
+        op_sym = UNARY_OP_SYMBOLS_C.get(node.get("op", "USub"), "-")
+        return "(" + op_sym + operand + ")"
+
+    def _gen_boolop(self, node):
+        """Generate a C boolean operation (&&, ||).
+
+        BoolOp nodes have a list of values and a single op.
+        """
+        op = node.get("op", "And")
+        op_sym = COMPARE_OP_SYMBOLS_C.get(op, "&&")
+        values = node.get("values", [])
+        if len(values) == 0:
+            return "0"
+        if len(values) == 1:
+            return "(" + self._gen_expr(values[0]) + ")"
+        parts = []
+        for v in values:
+            parts.append(self._gen_expr(v))
+        return "(" + (" " + op_sym + " ").join(parts) + ")"
+
+    def _gen_compare(self, node):
+        """Generate a C comparison expression.
+
+        Supports chained comparisons: a < b < c  ->  (a < b && b < c)
+        """
+        left = self._gen_expr(node.get("left"))
+        ops = node.get("ops", [])
+        comparators = node.get("comparators", [])
+
+        if len(ops) == 0:
+            return left
+
+        parts = [left]
+        for i in range(len(ops)):
+            op_sym = COMPARE_OP_SYMBOLS_C.get(ops[i], "==")
+            comp_str = self._gen_expr(comparators[i])
+            parts.append(op_sym)
+            parts.append(comp_str)
+
+        # Single comparison
+        if len(ops) == 1:
+            return "(" + parts[0] + " " + parts[1] + " " + parts[2] + ")"
+
+        # Chained comparison: a < b < c  ->  (a < b) && (b < c)
+        chain_parts = []
+        prev = parts[0]
+        for i in range(0, len(parts), 2):
+            if i + 2 < len(parts):
+                chain_parts.append("(" + prev + " " + parts[i+1] + " " + parts[i+2] + ")")
+                prev = parts[i+2]
+
+        return "(" + " && ".join(chain_parts) + ")"
+
+    def _gen_call(self, node):
+        """Generate a C function call.
+
+        Handles built-in function translations and special cases:
+        - print -> printf
+        - len -> strlen
+        - input -> mmc_input
+        - range -> handled in for-loop context
+        """
+        func = node.get("func", {})
+        args = node.get("args", [])
+        kwargs = node.get("keywords", [])
+
+        # Resolve function name
+        func_name = ""
+        func_type = func.get("type", "")
+
+        if func_type == NODE_NAME:
+            raw_name = func.get("id", "")
+            # Translate Myanmar function names
+            func_name = MM_FUNC_MAP_C.get(raw_name, raw_name)
+            func_name = self._translate_name(func_name)
+        elif func_type == NODE_ATTRIBUTE:
+            obj = self._gen_expr(func.get("value", {}))
+            attr = func.get("attr", "")
+            method_c = MM_METHOD_MAP_C.get(attr, attr)
+            method_c = self._translate_name(method_c)
+            arg_strs = [obj]
+            for a in args:
+                arg_strs.append(self._gen_expr(a))
+            return method_c + "(" + ", ".join(arg_strs) + ")"
+        else:
+            func_name = self._gen_expr(func)
+
+        # Special case: printf for print
+        if func_name in ("printf",):
+            return self._gen_print(args)
+
+        # Special case: strlen for len
+        if func_name in ("strlen",):
+            if len(args) == 1:
+                return "strlen(" + self._gen_expr(args[0]) + ")"
+            return "strlen(" + self._gen_expr(args[0]) + ")"
+
+        # Generate argument list
+        arg_strs = []
+        for a in args:
+            arg_strs.append(self._gen_expr(a))
+
+        # Handle kwargs (e.g., end="" in print)
+        for kw in kwargs:
+            arg_name = kw.get("arg", "")
+            kw_value = self._gen_expr(kw.get("value", {}))
+            arg_strs.append(arg_name + " = " + kw_value)
+
+        return func_name + "(" + ", ".join(arg_strs) + ")"
+
+    def _gen_ia_call(self, node):
+        """Generate an IA (AI) method call through the __mmc_ai__ bridge struct.
+
+        All 18 IA methods are function pointers in the MMC_AI_Bridge struct.
+        C pattern: __mmc_ai__.method("argument")
+        """
+        method = node.get("method", "say")
+        args = node.get("args", [])
+
+        # Translate Myanmar IA method names to English
+        method_c = IA_METHOD_MAP_C.get(method, method)
+
+        # Build argument string
+        if len(args) == 0:
+            arg_str = '""'
+        elif len(args) == 1:
+            arg_str = self._gen_expr(args[0])
+        else:
+            # Multiple args: join with separator
+            self.needs_string_buf = True
+            self.string_var_counter += 1
+            tmp = "mmc_ia_" + str(self.string_var_counter)
+            fmt_parts = []
+            val_parts = []
+            for a in args:
+                ct = self._c_type(a)
+                expr = self._gen_expr(a)
+                if "char" in ct:
+                    fmt_parts.append("%s")
+                elif "double" in ct:
+                    fmt_parts.append("%f")
+                else:
+                    fmt_parts.append("%d")
+                val_parts.append(expr)
+            fmt = '" | "'.join(fmt_parts) + '"'
+            arg_str = tmp
+            # The sprintf is generated inline
+            return ('sprintf(' + tmp + ', ' + fmt + ', '
+                    + ', '.join(val_parts) + '); '
+                    + '__mmc_ai__.' + method_c + '(' + tmp + ')')
+
+        return "__mmc_ai__." + method_c + "(" + arg_str + ")"
+
+    def _gen_attribute(self, node):
+        """Generate a C attribute access: obj.attr
+
+        For string methods, generates mmc_str_* wrapper calls.
+        """
+        value = self._gen_expr(node.get("value", {}))
+        attr = node.get("attr", "")
+        attr_c = MM_METHOD_MAP_C.get(attr, attr)
+        attr_c = self._translate_name(attr_c)
+        return value + "->" + attr_c
+
+    def _gen_subscript(self, node):
+        """Generate a C subscript access: arr[index]"""
+        value = self._gen_expr(node.get("value", {}))
+        index = self._gen_expr(node.get("slice", {}))
+        return value + "[" + index + "]"
+
+    def _gen_list(self, node):
+        """Generate a C array initializer or a comment for list literal.
+
+        Full list support in C requires dynamic allocation; for simple
+        cases we generate a static array initializer.
+        """
+        elts = node.get("elts", [])
+        if len(elts) == 0:
+            return "NULL"
+
+        # Check element type
+        parts = []
+        for e in elts:
+            parts.append(self._gen_expr(e))
+
+        elem_type = "int"
+        if len(elts) > 0:
+            elem_type = self._c_type(elts[0])
+
+        self.string_var_counter += 1
+        arr_name = "mmc_arr_" + str(self.string_var_counter)
+        return arr_name
+
+    def _gen_joined_str(self, node):
+        """Generate a C string from a JoinedStr (f-string equivalent).
+
+        Builds a sprintf call with format specifiers.
+        """
+        values = node.get("values", [])
+        if len(values) == 0:
+            return '""'
+
+        fmt_parts = []
+        val_parts = []
+
+        for v in values:
+            vtype = v.get("type", "")
+            if vtype == NODE_CONSTANT:
+                # Literal string part
+                val = v.get("value", "")
+                if isinstance(val, str):
+                    fmt_parts.append(val)
+                else:
+                    fmt_parts.append(str(val))
+            else:
+                # Expression part - use format specifier
+                ct = self._c_type(v)
+                expr = self._gen_expr(v)
+                if "char" in ct:
+                    fmt_parts.append("%s")
+                elif "double" in ct:
+                    fmt_parts.append("%f")
+                else:
+                    fmt_parts.append("%d")
+                val_parts.append(expr)
+
+        fmt_str = '"' + "".join(fmt_parts) + '"'
+        if val_parts:
+            self.string_var_counter += 1
+            tmp = "mmc_fstr_" + str(self.string_var_counter)
+            self.needs_string_buf = True
+            return "sprintf(" + tmp + ", " + fmt_str + ", " + ", ".join(val_parts) + ")"
+        return fmt_str
+
+    def _gen_assign(self, node):
+        """Generate a C assignment: target = value;"""
+        targets = node.get("targets", [])
+        value = node.get("value", None)
+
+        if value is None:
+            return ""
+
+        val_str = self._gen_expr(value)
+        result_parts = []
+
+        for t in targets:
+            ttype = t.get("type", "")
+            if ttype == NODE_NAME:
+                tname = self._translate_name(t.get("id", "mmc_tmp"))
+                # Track variable type
+                self.var_types[tname] = self._c_type(value)
+                result_parts.append(self._ind() + tname + " = " + val_str + ";")
+            elif ttype == NODE_SUBSCRIPT:
+                arr = self._gen_expr(t.get("value", {}))
+                idx = self._gen_expr(t.get("slice", {}))
+                result_parts.append(self._ind() + arr + "[" + idx + "] = " + val_str + ";")
+            elif ttype == NODE_ATTRIBUTE:
+                obj = self._gen_expr(t.get("value", {}))
+                attr = t.get("attr", "")
+                result_parts.append(self._ind() + obj + "." + attr + " = " + val_str + ";")
+
+        return "\n".join(result_parts)
+
+    def _gen_aug_assign(self, node):
+        """Generate a C augmented assignment: target op= value;"""
+        target = node.get("target", {})
+        op = node.get("op", "Add")
+        value = node.get("value", None)
+
+        op_sym = BIN_OP_SYMBOLS_C.get(op, "+")
+        val_str = self._gen_expr(value)
+
+        ttype = target.get("type", "")
+        if ttype == NODE_NAME:
+            tname = self._translate_name(target.get("id", ""))
+            return self._ind() + tname + " " + op_sym + "= " + val_str + ";"
+        elif ttype == NODE_SUBSCRIPT:
+            arr = self._gen_expr(target.get("value", {}))
+            idx = self._gen_expr(target.get("slice", {}))
+            return self._ind() + arr + "[" + idx + "] " + op_sym + "= " + val_str + ";"
+
+        return self._ind() + "/* augmented assign */"
+
+    # -----------------------------------------------------------
+    # Name translation helpers
+    # -----------------------------------------------------------
+
+    def _translate_name(self, name):
+        """Translate a Myanmar or MMC identifier to a safe C identifier.
+
+        Replaces non-ASCII characters with underscores.
+        Maps known Myanmar keywords to C equivalents.
+        """
+        # Check value map first
+        if name in MM_VALUE_MAP_C:
+            return MM_VALUE_MAP_C[name]
+
+        # Check function map
+        if name in MM_FUNC_MAP_C:
+            return MM_FUNC_MAP_C[name]
+
+        # Translate Myanmar identifiers: replace non-ASCII chars
+        safe = ""
+        for ch in name:
+            code = ord(ch)
+            if code < 128 and (ch.isalnum() or ch == '_'):
+                safe = safe + ch
+            else:
+                # Replace with _XXXX (unicode codepoint in hex)
+                safe = safe + "_u" + str(code)
+
+        # Ensure it starts with a letter or underscore (C requirement)
+        if len(safe) > 0 and (safe[0].isdigit()):
+            safe = "_mmc_" + safe
+        if len(safe) == 0:
+            safe = "_mmc_empty"
+
+        return safe
+
+    def _convert_myanmar_digits(self, text):
+        """Convert Myanmar digits (၀-၉) in a string to Arabic (0-9)."""
+        result = text
+        for mm_digit, ar_digit in MYANMAR_DIGITS.items():
+            result = result.replace(mm_digit, ar_digit)
+        return result
+
+
+# =================================================================
+# SECTION 8: Standalone Convenience Functions
+# =================================================================
+
+def generate_c_code(ast_body):
+    """One-shot function: create a C code generator and generate C source.
+
+    Args:
+        ast_body: List of AST node dicts (the program body).
+
+    Returns:
+        Complete C99 source code string ready for compilation.
+    """
+    gen = MMC_C_CodeGenerator()
+    return gen.generate_program(ast_body)
