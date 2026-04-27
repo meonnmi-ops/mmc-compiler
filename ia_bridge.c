@@ -451,13 +451,8 @@ int main(void)
 
     printf("\n");
 
-    /* --- Runtime Helper Tests --- */
-    printf("mmc_str_len(\"hello\") = %d\n", mmc_str_len("hello"));
-    printf("mmc_sum(NULL, 0) = %d\n", mmc_sum(NULL, 0));
-    {
-        int vals[] = {10, 20, 30};
-        printf("mmc_sum({10,20,30}, 3) = %d\n", mmc_sum(vals, 3));
-    }
+    /* --- Runtime Helper Tests (from mmclib) --- */
+    printf("mmc_str_len(\"hello\") = %zu\n", mmc_str_len("hello"));
 
     printf("\n");
 
