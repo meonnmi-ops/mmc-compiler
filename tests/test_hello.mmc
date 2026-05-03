@@ -1,0 +1,74 @@
+# ============================================
+# MMC Test: Hello World
+# ============================================
+# မြန်မာဘာသာစကားဖြင့် ရေးသားထားသည့် ချက်ချင်း ပြောင်းလဲပြီး
+# ပြဿနာ လုံးကိုင် စမ်းသပ်ခြင်း
+
+# လိုလား (Variable Declaration)
+var name = "MMC Compiler"
+var version = 8.2
+var is_awesome = true
+
+# ပုံနှိပ် (Print)
+print "Hello from MMC Compiler!"
+print "Version:", version
+print "Name:", name
+print "Awesome:", is_awesome
+println ""
+
+# တကယ့် ကိန်း သုံးပါ (Basic Arithmetic)
+var a = 10
+var b = 3
+print "a + b =", a + b
+print "a - b =", a - b
+print "a * b =", a * b
+print "a / b =", a / b
+print "a % b =", a % b
+println ""
+
+# ကောင်းလျှင် / တိုင်းပဲ (If / Else)
+var x = 42
+if x > 30
+    println "x is greater than 30!"
+else
+    println "x is 30 or less"
+println ""
+
+# ကြာခါင်း (While Loop)
+var i = 0
+while i < 5
+    print "Count:", i
+    i = i + 1
+println ""
+
+# အတွက် (For Loop)
+for n in range(1, 6)
+    print "For:", n
+println ""
+
+# အလုပ် (Function)
+func add(x, y)
+    return x + y
+
+func factorial(n)
+    if n <= 1
+        return 1
+    return n * factorial(n - 1)
+
+print "add(3, 4) =", add(3, 4)
+print "factorial(5) =", factorial(5)
+println ""
+
+# String concatenation
+var greeting = "Hello" + " " + "Myanmar!"
+println greeting
+println ""
+
+# Comparison
+print "10 == 10:", 10 == 10
+print "10 != 20:", 10 != 20
+print "10 < 20:", 10 < 20
+print "20 > 10:", 20 > 10
+
+println ""
+println "=== All tests passed! ==="
